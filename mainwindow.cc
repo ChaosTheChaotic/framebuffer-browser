@@ -248,8 +248,7 @@ MainWindow::MainWindow() : QMainWindow() {
     urlBar->selectAll();
   });
 
-  // After 1000ms, load the URL
-  QTimer::singleShot(1000, this, SLOT(loadStartupUrl()));
+  QTimer::singleShot(0, this, SLOT(loadStartupUrl()));
 }
 
 MainWindow::~MainWindow() {
