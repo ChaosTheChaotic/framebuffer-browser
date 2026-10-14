@@ -15,9 +15,9 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui WebEngineWidgets)
 add_definitions (-DQT_DISABLE_DEPRECATED_BEFORE=0x060000)
 
 set(PROJECT_SOURCES
-    main.cpp
-    mainwindow.cpp
-    mainwindow.h
+    main.cc
+    mainwindow.cc
+    mainwindow.hh
 )
 
 

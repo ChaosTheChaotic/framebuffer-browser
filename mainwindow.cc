@@ -1,4 +1,4 @@
-#include "mainwindow.h"
+#include "mainwindow.hh"
 #include "qobject.h"
 #include "qobjectdefs.h"
 #include "qtabwidget.h"
@@ -109,7 +109,7 @@ void MainWindow::addNewTab(const QString &url) {
   tabWidget->setCurrentIndex(idx);
 
   connect(webView, &QWebEngineView::titleChanged, this,
-          [=](const QString &title) {
+          [this, webView](const QString &title) {
             int idx = tabWidget->indexOf(webView);
             if (idx != -1) {
               tabWidget->setTabText(idx, title.left(20)); // Limit title length
@@ -129,7 +129,7 @@ void MainWindow::addNewTab(const QString &url) {
 MainWindow::MainWindow() : QMainWindow() {
   loadConfig();
 
-	appSettings = new QSettings(this);
+  appSettings = new QSettings(this);
 
   // Load proxy settings
   if (optProxyHost != "") {
@@ -154,7 +154,7 @@ MainWindow::MainWindow() : QMainWindow() {
   setCentralWidget(tabWidget);
 
   // connect handler for fullscreen press on video
-  connect(tabWidget, &QTabWidget::tabCloseRequested, this, [=](int i) {
+  connect(tabWidget, &QTabWidget::tabCloseRequested, this, [this](int i) {
     QWidget *widget = tabWidget->widget(i);
     if (tabWidget->count() > 1) {
       widget->deleteLater();
