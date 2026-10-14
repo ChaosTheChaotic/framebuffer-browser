@@ -1,4 +1,5 @@
 #include "mainwindow.hh"
+#include "qboxlayout.h"
 #include "qnamespace.h"
 #include "qobject.h"
 #include "qobjectdefs.h"
@@ -7,6 +8,7 @@
 #include "qwebengineview.h"
 
 #include <QApplication>
+#include <QVBoxLayout>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -94,11 +96,12 @@ void MainWindow::slotShortcutForward() {
 // Slot handler for Ctrl + W
 void MainWindow::slotShortcutCloseTab(int idx) {
   if (idx < 0) {
-    idx = tabWidget->currentIndex();
+    idx = tabBar->currentIndex();
   }
-  if (idx >= 0 && idx < tabWidget->count()) {
-    QWidget *widget = tabWidget->widget(idx);
-    if (tabWidget->count() > 1) {
+  if (idx >= 0 && idx < stackedWidget->count()) {
+    if (stackedWidget->count() > 1) {
+      QWidget *widget = stackedWidget->widget(idx);
+      tabBar->removeTab(idx);
       widget->deleteLater();
     } else {
       close();
@@ -107,11 +110,11 @@ void MainWindow::slotShortcutCloseTab(int idx) {
 }
 
 QWebEngineView *MainWindow::currentWebView() const {
-  return qobject_cast<QWebEngineView *>(tabWidget->currentWidget());
+  return qobject_cast<QWebEngineView *>(stackedWidget->currentWidget());
 }
 
 void MainWindow::addNewTab(const QString &url) {
-  QWebEngineView *webView = new QWebEngineView(tabWidget);
+  QWebEngineView *webView = new QWebEngineView(stackedWidget);
   configureWebView(webView);
 
   webView->page()->profile()->setHttpUserAgent(
@@ -121,14 +124,23 @@ void MainWindow::addNewTab(const QString &url) {
           &MainWindow::fullScreenRequested);
   connect(webView, SIGNAL(loadStarted()), this, SLOT(onLoadStarted()));
 
-  int idx = tabWidget->addTab(webView, "New Tab");
-  tabWidget->setCurrentIndex(idx);
+  int idx = stackedWidget->addWidget(webView);
+  tabBar->addTab("New Tab");
+  tabBar->setCurrentIndex(idx);
+  stackedWidget->setCurrentIndex(idx);
 
   connect(webView, &QWebEngineView::titleChanged, this,
           [this, webView](const QString &title) {
-            int idx = tabWidget->indexOf(webView);
+            int idx = stackedWidget->indexOf(webView);
             if (idx != -1) {
-              tabWidget->setTabText(idx, title.left(20)); // Limit title length
+              tabBar->setTabText(idx, title.left(20));
+            }
+          });
+
+  connect(webView, &QWebEngineView::urlChanged, this,
+          [this, webView](const QUrl &newUrl) {
+            if (webView == currentWebView()) {
+              urlBar->setText(newUrl.toString());
             }
           });
 
@@ -162,15 +174,47 @@ MainWindow::MainWindow() : QMainWindow() {
     resize(optWidth, optHeight);
   }
 
+	QWidget *mainContainer = new QWidget(this);
+	QVBoxLayout *layout = new QVBoxLayout(mainContainer);
+	layout->setContentsMargins(0, 0, 0, 0);
+	layout->setSpacing(0);
+
+	urlBar = new QLineEdit(this);
+	urlBar->setPlaceholderText("Enter URL");
+
+  connect(urlBar, &QLineEdit::returnPressed, this, [this]() {
+    QString text = urlBar->text();
+    if (!text.isEmpty()) {
+      loadUrl(text);
+    }
+    // Return focus back to the active web view
+    if (QWebEngineView *view = currentWebView()) {
+      view->setFocus();
+    }
+  });
+
+  stackedWidget = new QStackedWidget(this);
+
   // Create a tab
-  tabWidget = new QTabWidget(this);
-  tabWidget->setTabsClosable(true);
+  tabBar = new QTabBar(this);
+  tabBar->setTabsClosable(true);
 
   // Add the web view to our window
-  setCentralWidget(tabWidget);
+  layout->addWidget(tabBar);
+  layout->addWidget(urlBar);
+  layout->addWidget(stackedWidget);
+  setCentralWidget(mainContainer);
+
+  connect(tabBar, &QTabBar::currentChanged, this, [this](int index) {
+    if (QWebEngineView *view = currentWebView()) {
+      urlBar->setText(view->url().toString());
+    } else {
+      urlBar->clear();
+    }
+  });
 
   // connect handler for fullscreen press on video
-  connect(tabWidget, &QTabWidget::tabCloseRequested, this,
+  connect(tabBar, &QTabBar::tabCloseRequested, this,
           &MainWindow::slotShortcutCloseTab);
 
   // Ctrl + Q
@@ -189,12 +233,20 @@ MainWindow::MainWindow() : QMainWindow() {
 
   keyCtrlT = new QShortcut(this);
   keyCtrlT->setKey(QKeySequence(Qt::CTRL | Qt::Key_T));
-  connect(keyCtrlT, SIGNAL(activated()), this, SLOT(loadStartupUrl()));
+  connect(keyCtrlT, &QShortcut::activated, this,
+          [this]() { addNewTab(optStartupUrl); });
 
   keyCtrlW = new QShortcut(this);
   keyCtrlW->setKey(QKeySequence(Qt::CTRL | Qt::Key_W));
   connect(keyCtrlW, &QShortcut::activated, this,
           [this]() { slotShortcutCloseTab(); });
+
+  keyCtrlL = new QShortcut(this);
+  keyCtrlL->setKey(QKeySequence(Qt::CTRL | Qt::Key_L));
+  connect(keyCtrlL, &QShortcut::activated, this, [this]() {
+    urlBar->setFocus();
+    urlBar->selectAll();
+  });
 
   // After 1000ms, load the URL
   QTimer::singleShot(1000, this, SLOT(loadStartupUrl()));
@@ -208,7 +260,7 @@ MainWindow::~MainWindow() {
 void MainWindow::onLoadStarted() { qDebug() << "onLoadStarted"; }
 
 void MainWindow::loadUrl(QString url) {
-  if (tabWidget->count() == 0) {
+  if (stackedWidget->count() == 0) {
     addNewTab(url);
   } else {
     QWebEngineView *view = currentWebView();

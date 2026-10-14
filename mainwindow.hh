@@ -3,11 +3,14 @@
 
 #include "qtabwidget.h"
 #include <QCloseEvent>
+#include <QLineEdit>
 #include <QMainWindow>
 #include <QMenu>
 #include <QSettings>
 #include <QShortcut>
 #include <QTabWidget>
+#include <QTabBar>
+#include <QStackedWidget>
 #include <QWebEngineFullScreenRequest>
 #include <QWebEnginePage>
 #include <QWebEngineView>
@@ -25,7 +28,9 @@ class MainWindow : public QMainWindow {
   int optProxyPort = 0;
 
 public:
-  QTabWidget *tabWidget;
+  QTabBar *tabBar;
+  QStackedWidget *stackedWidget;
+  QLineEdit *urlBar;
   explicit MainWindow();
   ~MainWindow();
   void configureWebView(QWebEngineView *view);
@@ -48,6 +53,7 @@ private:
   QShortcut *keyForward; // forward in history
   QShortcut *keyCtrlT;   // Create a new tab
   QShortcut *keyCtrlW;   // Close a tab
+  QShortcut *keyCtrlL;   // Focus url bar
   void fullScreenRequested(QWebEngineFullScreenRequest request);
   void writeSettings();
   QSettings *appSettings;
