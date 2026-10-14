@@ -1,6 +1,6 @@
 # Framebuffer Browser
 
-QtWebEngine-based web browser for Linux framebuffer. Forked and adapted from https://github.com/e1z0/Framebuffer-browser.
+QtWebEngine-based web browser for Linux framebuffer. Forked and adapted from https://github.com/femelo/Framebuffer-browser.
 
 ## Features
 
@@ -31,6 +31,44 @@ tty, audio, video, usb, input
 
 - `linuxfb` - uses linux framebuffer device (unaccelerated vesa mode)
 - `eglfs` - uses linux kernel mode setting drm drivers (accelerated, your device must be supported by the kernel)
+
+## NixOS Installation & Flakes
+
+This repository includes a Nix Flake providing a standalone package, a development shell, and a complete NixOS module.
+
+### Using as a NixOS Module
+
+1. Add `framebuffer-browser` as an input in your system's `flake.nix`:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    framebuffer-browser.url = "github:ChaosTheChaotic/framebuffer-browser";
+  };
+
+  outputs = { self, nixpkgs, framebuffer-browser, ... }@inputs: {
+    nixosConfigurations.your-hostname = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        ./configuration.nix
+        framebuffer-browser.nixosModules.default
+      ];
+    };
+  };
+}
+```
+2. Enable and configure the module in your `configuration.nix`:
+
+```nix
+programs.framebuffer-browser = {
+  enable = true;
+  users = [ "yourusername" ];     # Automatically grants required input, video, and tty permissions
+  backend = "auto";               # Choose between "auto", "eglfs", "fb", or "wayland"
+  hardwareCursor = false;         # Set to true if your KMS driver supports hardware cursors
+  pointerSpeed = 0.0;             # Optional libinput pointer speed adjustment (-1.0 to 1.0, though note this does not actually use libinput)
+};
+```
 
 ## TODO
 

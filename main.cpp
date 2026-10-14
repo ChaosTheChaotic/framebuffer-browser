@@ -1,4 +1,3 @@
-
 #include <qapplication.h>
 #include "mainwindow.h"
 
