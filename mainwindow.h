@@ -1,15 +1,17 @@
 #ifndef BROWSERWINDOW_H
 #define BROWSERWINDOW_H
 
+#include "qtabwidget.h"
+#include <QCloseEvent>
 #include <QMainWindow>
 #include <QMenu>
-#include <QWidget>
-#include <QShortcut>
 #include <QSettings>
+#include <QShortcut>
+#include <QTabWidget>
 #include <QWebEngineFullScreenRequest>
 #include <QWebEnginePage>
 #include <QWebEngineView>
-#include <QCloseEvent>
+#include <QWidget>
 #include <qwebengineview.h>
 
 class MainWindow : public QMainWindow {
@@ -22,29 +24,33 @@ class MainWindow : public QMainWindow {
   QString optProxyHost = "";
   int optProxyPort = 0;
 
- public:
-  QWebEngineView *webView;
+public:
+  QTabWidget *tabWidget;
   explicit MainWindow();
   ~MainWindow();
-  void configureWebView();
+  void configureWebView(QWebEngineView *view);
   void loadConfig();
   void loadUrl(QString url);
+  QWebEngineView *currentWebView() const;
 
- public slots:
+public slots:
   void loadStartupUrl();
   void onLoadStarted();
   void slotShortcutCtrlQ();
   void slotShortcutBack();
   void slotShortcutForward();
- private:
+  void addNewTab(const QString &url = QString());
+
+private:
   QShortcut *keyCtrlQ;   // Entity of Ctrl + Q hotkeys
   QShortcut *keyBack;    // back in history
   QShortcut *keyForward; // forward in history
   void fullScreenRequested(QWebEngineFullScreenRequest request);
   void writeSettings();
   QSettings *appSettings;
- protected:
+
+protected:
   void closeEvent(QCloseEvent *) override;
 };
 
-#endif  // BROWSERWINDOW_H
+#endif // BROWSERWINDOW_H

@@ -1,20 +1,24 @@
 #include "mainwindow.h"
+#include "qobject.h"
+#include "qobjectdefs.h"
+#include "qtabwidget.h"
+#include "qurl.h"
+#include "qwebengineview.h"
 
 #include <QApplication>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkProxy>
-#include <QTimer>
 #include <QProcess>
-#include <QDebug>
+#include <QTimer>
 #include <QWebEngineFullScreenRequest>
 #include <QWebEngineProfile>
 #include <QWebEngineSettings>
 #include <qkeysequence.h>
-
 
 void MainWindow::closeEvent(QCloseEvent *) {
   // This will be called whenever this window is closed.
@@ -22,30 +26,34 @@ void MainWindow::closeEvent(QCloseEvent *) {
   qDebug() << "closing2";
 }
 
-void MainWindow::configureWebView() {
+void MainWindow::configureWebView(QWebEngineView *view) {
   // Enable basic JavaScript support
-  webView->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
-  webView->settings()->setAttribute(QWebEngineSettings::PluginsEnabled, true);
-  webView->settings()->setAttribute(QWebEngineSettings::LocalStorageEnabled, true);
+  view->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
+  view->settings()->setAttribute(QWebEngineSettings::PluginsEnabled, true);
+  view->settings()->setAttribute(QWebEngineSettings::LocalStorageEnabled, true);
   // Don't allow JavaScript to open/close windows
-  webView->settings()->setAttribute(QWebEngineSettings::JavascriptCanOpenWindows,false);
+  view->settings()->setAttribute(QWebEngineSettings::JavascriptCanOpenWindows,
+                                 false);
   // Allow JavaScript to access clipboard
-  webView->settings()->setAttribute(QWebEngineSettings::JavascriptCanAccessClipboard,true);
+  view->settings()->setAttribute(
+      QWebEngineSettings::JavascriptCanAccessClipboard, true);
   // Allow universal access from file URLs
-  webView->settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls,true);
-  webView->settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
+  view->settings()->setAttribute(
+      QWebEngineSettings::LocalContentCanAccessFileUrls, true);
+  view->settings()->setAttribute(
+      QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
   // Enable full screen request
-  webView->settings()->setAttribute(QWebEngineSettings::FullScreenSupportEnabled, true);
+  view->settings()->setAttribute(QWebEngineSettings::FullScreenSupportEnabled,
+                                 true);
 }
 
-
 void MainWindow::writeSettings() {
-  // Write the values to disk in categories.
-  QString site = webView->url().toString();
+  QWebEngineView *view = currentWebView();
+  if (!view)
+    return;
+  QString site = view->url().toString();
   appSettings->setValue("site", site);
   qDebug() << " write settings:" << site;
-  QString hostname = webView->url().host();
-  webView->setUrl(appSettings->value("site").toString());
 }
 
 void MainWindow::fullScreenRequested(QWebEngineFullScreenRequest request) {
@@ -68,20 +76,60 @@ void MainWindow::slotShortcutCtrlQ() {
 
 // Slot handler for Ctrl + Left
 void MainWindow::slotShortcutBack() {
-   qDebug() << "Going back..";
-   webView->page()->triggerAction(QWebEnginePage::Back);
+  if (QWebEngineView *view = currentWebView()) {
+    qDebug() << "Going back..";
+    view->page()->triggerAction(QWebEnginePage::Back);
+  }
 }
 
 // Slot handler for Ctrl + Right
 void MainWindow::slotShortcutForward() {
-   qDebug() << "Going forward..";
-   webView->page()->triggerAction(QWebEnginePage::Forward);
+  if (QWebEngineView *view = currentWebView()) {
+    qDebug() << "Going forward..";
+    view->page()->triggerAction(QWebEnginePage::Forward);
+  }
 }
 
-MainWindow::MainWindow()
-    : QMainWindow() {
+QWebEngineView *MainWindow::currentWebView() const {
+  return qobject_cast<QWebEngineView *>(tabWidget->currentWidget());
+}
+
+void MainWindow::addNewTab(const QString &url) {
+  QWebEngineView *webView = new QWebEngineView(tabWidget);
+  configureWebView(webView);
+
+  webView->page()->profile()->setHttpUserAgent(
+      "Mozilla/5.0 (X11; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0");
+
+  connect(webView->page(), &QWebEnginePage::fullScreenRequested, this,
+          &MainWindow::fullScreenRequested);
+  connect(webView, SIGNAL(loadStarted()), this, SLOT(onLoadStarted()));
+
+  int idx = tabWidget->addTab(webView, "New Tab");
+  tabWidget->setCurrentIndex(idx);
+
+  connect(webView, &QWebEngineView::titleChanged, this,
+          [=](const QString &title) {
+            int idx = tabWidget->indexOf(webView);
+            if (idx != -1) {
+              tabWidget->setTabText(idx, title.left(20)); // Limit title length
+            }
+          });
+
+  if (!url.isEmpty()) {
+    QString target = url;
+    if (target.startsWith("./")) {
+      target =
+          "file:///" + QDir::currentPath() + QDir::separator() + target.mid(2);
+    }
+    webView->load(QUrl(target));
+  }
+}
+
+MainWindow::MainWindow() : QMainWindow() {
   loadConfig();
 
+	appSettings = new QSettings(this);
 
   // Load proxy settings
   if (optProxyHost != "") {
@@ -95,21 +143,28 @@ MainWindow::MainWindow()
 
   // Set window size
   if (optWidth) {
-      resize(optWidth, optHeight);
+    resize(optWidth, optHeight);
   }
 
-  // Create the web view
-  webView = new QWebEngineView(this);
+  // Create a tab
+  tabWidget = new QTabWidget(this);
+  tabWidget->setTabsClosable(true);
 
-  configureWebView();
   // Add the web view to our window
-  setCentralWidget(webView);
+  setCentralWidget(tabWidget);
 
   // connect handler for fullscreen press on video
-  connect(webView->page(), &QWebEnginePage::fullScreenRequested, this, &MainWindow::fullScreenRequested);
+  connect(tabWidget, &QTabWidget::tabCloseRequested, this, [=](int i) {
+    QWidget *widget = tabWidget->widget(i);
+    if (tabWidget->count() > 1) {
+      widget->deleteLater();
+    } else {
+      close(); // Close window if last tab closed
+    }
+  });
 
   // Ctrl + Q
-  keyCtrlQ = new QShortcut(this);         // Initialize the object
+  keyCtrlQ = new QShortcut(this);                       // Initialize the object
   keyCtrlQ->setKey(QKeySequence(Qt::CTRL | Qt::Key_Q)); // Set the key code
   // connect handler to keypress
   connect(keyCtrlQ, SIGNAL(activated()), this, SLOT(slotShortcutCtrlQ()));
@@ -122,32 +177,28 @@ MainWindow::MainWindow()
   keyForward->setKey(QKeySequence(Qt::CTRL | Qt::Key_Right));
   connect(keyForward, SIGNAL(activated()), this, SLOT(slotShortcutForward()));
 
-  this->webView->page()->profile()->setHttpUserAgent("Mozilla/5.0 (X11; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0");
-
-  // Handle page load events
-  connect(webView, SIGNAL(loadStarted()), this, SLOT(onLoadStarted()));
-
   // After 1000ms, load the URL
   QTimer::singleShot(1000, this, SLOT(loadStartupUrl()));
 }
 
 MainWindow::~MainWindow() {
   qDebug() << "main window destroyed";
-  webView->close();
-  webView->~QWebEngineView();
   destroy();
 }
 
-void MainWindow::onLoadStarted() { 
-    qDebug() << "onLoadStarted"; 
-}
+void MainWindow::onLoadStarted() { qDebug() << "onLoadStarted"; }
 
 void MainWindow::loadUrl(QString url) {
-  if (url.startsWith("./")) {
-    url = "file:///" + QDir::currentPath() + QDir::separator() + url.mid(2);
+  if (tabWidget->count() == 0) {
+    addNewTab(url);
+  } else {
+    QWebEngineView *view = currentWebView();
+    if (url.startsWith("./")) {
+      url = "file:///" + QDir::currentPath() + QDir::separator() + url.mid(2);
+    }
+    qDebug() << "Loading URL in current tab:" << url;
+    view->load(QUrl(url));
   }
-  qDebug() << "Loading URL:" << url;
-  webView->load(QUrl(url));
 }
 
 void MainWindow::loadStartupUrl() { loadUrl(optStartupUrl); }
