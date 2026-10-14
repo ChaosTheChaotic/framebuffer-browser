@@ -1,4 +1,5 @@
 #include "mainwindow.hh"
+#include "qnamespace.h"
 #include "qobject.h"
 #include "qobjectdefs.h"
 #include "qtabwidget.h"
@@ -90,6 +91,21 @@ void MainWindow::slotShortcutForward() {
   }
 }
 
+// Slot handler for Ctrl + W
+void MainWindow::slotShortcutCloseTab(int idx) {
+  if (idx < 0) {
+    idx = tabWidget->currentIndex();
+  }
+  if (idx >= 0 && idx < tabWidget->count()) {
+    QWidget *widget = tabWidget->widget(idx);
+    if (tabWidget->count() > 1) {
+      widget->deleteLater();
+    } else {
+      close();
+    }
+  }
+}
+
 QWebEngineView *MainWindow::currentWebView() const {
   return qobject_cast<QWebEngineView *>(tabWidget->currentWidget());
 }
@@ -154,14 +170,8 @@ MainWindow::MainWindow() : QMainWindow() {
   setCentralWidget(tabWidget);
 
   // connect handler for fullscreen press on video
-  connect(tabWidget, &QTabWidget::tabCloseRequested, this, [this](int i) {
-    QWidget *widget = tabWidget->widget(i);
-    if (tabWidget->count() > 1) {
-      widget->deleteLater();
-    } else {
-      close(); // Close window if last tab closed
-    }
-  });
+  connect(tabWidget, &QTabWidget::tabCloseRequested, this,
+          &MainWindow::slotShortcutCloseTab);
 
   // Ctrl + Q
   keyCtrlQ = new QShortcut(this);                       // Initialize the object
@@ -176,6 +186,15 @@ MainWindow::MainWindow() : QMainWindow() {
   keyForward = new QShortcut(this);
   keyForward->setKey(QKeySequence(Qt::CTRL | Qt::Key_Right));
   connect(keyForward, SIGNAL(activated()), this, SLOT(slotShortcutForward()));
+
+  keyCtrlT = new QShortcut(this);
+  keyCtrlT->setKey(QKeySequence(Qt::CTRL | Qt::Key_T));
+  connect(keyCtrlT, SIGNAL(activated()), this, SLOT(loadStartupUrl()));
+
+  keyCtrlW = new QShortcut(this);
+  keyCtrlW->setKey(QKeySequence(Qt::CTRL | Qt::Key_W));
+  connect(keyCtrlW, &QShortcut::activated, this,
+          [this]() { slotShortcutCloseTab(); });
 
   // After 1000ms, load the URL
   QTimer::singleShot(1000, this, SLOT(loadStartupUrl()));

@@ -39,12 +39,15 @@ public slots:
   void slotShortcutCtrlQ();
   void slotShortcutBack();
   void slotShortcutForward();
+  void slotShortcutCloseTab(int idx = -1);
   void addNewTab(const QString &url = QString());
 
 private:
   QShortcut *keyCtrlQ;   // Entity of Ctrl + Q hotkeys
   QShortcut *keyBack;    // back in history
   QShortcut *keyForward; // forward in history
+  QShortcut *keyCtrlT;   // Create a new tab
+  QShortcut *keyCtrlW;   // Close a tab
   void fullScreenRequested(QWebEngineFullScreenRequest request);
   void writeSettings();
   QSettings *appSettings;
