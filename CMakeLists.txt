@@ -3,8 +3,6 @@ project(fbbrowser LANGUAGES CXX)
 
 file(GLOB SRC_FILES *.c *.cpp *.qrc)
 
-set(CMAKE_PREFIX_PATH /opt/qt6.8/6.8.0/gcc_64)
-
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 set(CMAKE_AUTOMOC ON)

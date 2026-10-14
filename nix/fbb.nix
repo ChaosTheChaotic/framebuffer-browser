@@ -34,11 +34,6 @@ stdenv.mkDerivation {
     qtwayland
   ];
 
-  postPatch = ''
-    substituteInPlace CMakeLists.txt \
-      --replace-fail 'set(CMAKE_PREFIX_PATH /opt/qt6.8/6.8.0/gcc_64)' ""
-  '';
-
   postBuild = ''
     $CC -O3 -Wall -o fbbrowser-vt-reset ${./vtreset.c}
     $CC -O3 -Wall -shared -fPIC -o libfbbrowser-pointer.so ${./pointerspeed.c}
