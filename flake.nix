@@ -19,9 +19,10 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          adblock = pkgs.callPackage ./nix/adblock.nix { };
         in
         {
-          default = pkgs.callPackage ./nix/fbb.nix { };
+          default = pkgs.callPackage ./nix/fbb.nix { fbbAdblock = adblock; };
         }
       );
 
@@ -37,6 +38,8 @@
             nativeBuildInputs = with pkgs; [
               cmake
               pkg-config
+              cargo
+              rustc
               qt6.wrapQtAppsHook
               qt6.qtbase
               qt6.qtwebengine

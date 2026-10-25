@@ -5,6 +5,7 @@
   qt6,
   coreutils,
   util-linux,
+  fbbAdblock,
   defaultBackend ? "auto",
   pointerSpeed ? null,
   fbbSrc ? null,
@@ -28,11 +29,14 @@ stdenv.mkDerivation {
     qt6.wrapQtAppsHook
   ];
 
-  buildInputs = with qt6; [
-    qtbase
-    qtwebengine
-    qtwayland
-  ];
+  buildInputs =
+    with qt6;
+    [
+      qtbase
+      qtwebengine
+      qtwayland
+    ]
+    ++ [ fbbAdblock ];
 
   postBuild = ''
     $CC -O3 -Wall -o fbbrowser-vt-reset ${./vtreset.c}

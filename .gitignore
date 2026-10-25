@@ -77,3 +77,4 @@ Thumbs.db
 *.exe
 
 .direnv
+target

@@ -34,6 +34,7 @@ in
       default = pkgs.callPackage ./fbb.nix {
         pointerSpeed = cfg.pointerSpeed;
         fbbSrc = cfg.source;
+        fbbAdblock = pkgs.callPackage ./adblock.nix { };
       };
       defaultText = literalExpression "pkgs.callPackage ./fbb.nix { }";
       description = "The framebuffer-browser package to install.";

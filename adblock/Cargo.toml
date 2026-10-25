@@ -1,0 +1,21 @@
+[package]
+name = "framebuffer-browser-adblock"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "fbb_adblock"
+crate-type = ["staticlib"]
+
+[dependencies]
+# Single thread (default) makes engine !Send and !Sync which causes issues with running the engine on a worker thread
+adblock = { version = "0.13.3", default-features = false, features = [
+    "embedded-domain-resolver",
+    "full-regex-handling",
+    "selectors",
+    "cssparser",
+    "content-blocking",
+    "resource-assembler",
+] }
+# Parses resources.json (scriptlets + redirect resources) into `adblock::resources::Resource`.
+serde_json = "1.0.154"

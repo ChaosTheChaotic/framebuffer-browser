@@ -34,6 +34,17 @@ Only one URL is accepted (the browser reads just argv[1]). Chromium flags
 cannot be passed as arguments; use QTWEBENGINE_CHROMIUM_FLAGS instead.
 Quit the browser with Ctrl+Q. Ctrl+Left / Ctrl+Right go back / forward.
 
+Ad blocking (keys in config.json):
+  adblock          true/false   master switch (default true)
+  adblockDownload  true/false   download + auto-refresh filter lists; false uses
+                                only already-cached lists and adblockDirs
+  adblockDirs      ["/path"]    folders whose *.txt files (ABP/uBO syntax, not
+                                hosts files) are added to the rules; read at
+                                start-up and after each list refresh
+  adblockLists     ["https://"] replace the built-in uBO/EasyList set
+  adblockTtlHours  96           refresh period for lists without "! Expires:"
+  Lists are cached in \${XDG_CACHE_HOME:-~/.cache}/framebuffer-browser/adblock
+
 Environment:
   FBBROWSER_BACKEND          Default for --backend
   FBBROWSER_CONFIG_DIR       Directory holding config.json
@@ -312,7 +323,10 @@ if [ ! -e "$config_dir/config.json" ]; then
   "width": 0,
   "height": 0,
   "proxyHost": "",
-  "proxyPort": 0
+  "proxyPort": 0,
+  "adblock": true,
+  "adblockDownload": true,
+  "adblockDirs": []
 }
 JSON
 fi

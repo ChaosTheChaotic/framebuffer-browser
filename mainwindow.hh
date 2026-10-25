@@ -1,16 +1,16 @@
 #ifndef BROWSERWINDOW_H
 #define BROWSERWINDOW_H
 
-#include "qtabwidget.h"
+#include "adblock.hh"
 #include <QCloseEvent>
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QMenu>
 #include <QSettings>
 #include <QShortcut>
-#include <QTabWidget>
-#include <QTabBar>
 #include <QStackedWidget>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QWebEngineFullScreenRequest>
 #include <QWebEnginePage>
 #include <QWebEngineView>
@@ -26,6 +26,8 @@ class MainWindow : public QMainWindow {
   int optHeight = 0;
   QString optProxyHost = "";
   int optProxyPort = 0;
+  bool adblock = true;       // master switch ("adblock" in config.json)
+  AdBlockConfig adblockCfg;  // download toggle, lists, local dirs, cache dir
 
 public:
   QTabBar *tabBar;
@@ -48,15 +50,13 @@ public slots:
   void addNewTab(const QString &url = QString());
 
 private:
-  QShortcut *keyCtrlQ;   // Entity of Ctrl + Q hotkeys
-  QShortcut *keyBack;    // back in history
-  QShortcut *keyForward; // forward in history
-  QShortcut *keyCtrlT;   // Create a new tab
-  QShortcut *keyCtrlW;   // Close a tab
-  QShortcut *keyCtrlL;   // Focus url bar
+  QHash<QKeySequence, QShortcut *> shortcuts;
+  void addShortcut(const QKeySequence &keySeq, std::function<void()> handler);
   void fullScreenRequested(QWebEngineFullScreenRequest request);
   void writeSettings();
   QSettings *appSettings;
+  AdBlockManager *adblockMgr = nullptr;
+  bool startupLoaded = false;
 
 protected:
   void closeEvent(QCloseEvent *) override;

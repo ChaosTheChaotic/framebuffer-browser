@@ -1,14 +1,7 @@
 #include "mainwindow.hh"
-#include "qboxlayout.h"
-#include "qnamespace.h"
-#include "qobject.h"
-#include "qobjectdefs.h"
-#include "qtabwidget.h"
-#include "qurl.h"
-#include "qwebengineview.h"
+#include "adblock.hh"
 
 #include <QApplication>
-#include <QVBoxLayout>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -18,10 +11,16 @@
 #include <QNetworkProxy>
 #include <QProcess>
 #include <QTimer>
+#include <QVBoxLayout>
 #include <QWebEngineFullScreenRequest>
 #include <QWebEngineProfile>
 #include <QWebEngineSettings>
 #include <qkeysequence.h>
+
+namespace {
+// How long first nav may be held whilst filter lists loaded
+constexpr int kAdblockStartupGraceMs = 5000;
+} // namespace
 
 void MainWindow::closeEvent(QCloseEvent *) {
   // This will be called whenever this window is closed.
@@ -68,6 +67,17 @@ void MainWindow::fullScreenRequested(QWebEngineFullScreenRequest request) {
     this->showNormal();
   }
   request.accept();
+}
+
+void MainWindow::addShortcut(const QKeySequence &keySeq,
+                             std::function<void()> handler) {
+  if (shortcuts.contains(keySeq)) {
+    delete shortcuts[keySeq];
+  }
+  QShortcut *shortcut = new QShortcut(keySeq, this);
+  connect(shortcut, &QShortcut::activated, this, [handler]() { handler(); });
+
+  shortcuts[keySeq] = shortcut;
 }
 
 // Slot handler for Ctrl + Q
@@ -118,7 +128,7 @@ void MainWindow::addNewTab(const QString &url) {
   configureWebView(webView);
 
   webView->page()->profile()->setHttpUserAgent(
-      "Mozilla/5.0 (X11; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0");
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36");
 
   connect(webView->page(), &QWebEnginePage::fullScreenRequested, this,
           &MainWindow::fullScreenRequested);
@@ -174,13 +184,13 @@ MainWindow::MainWindow() : QMainWindow() {
     resize(optWidth, optHeight);
   }
 
-	QWidget *mainContainer = new QWidget(this);
-	QVBoxLayout *layout = new QVBoxLayout(mainContainer);
-	layout->setContentsMargins(0, 0, 0, 0);
-	layout->setSpacing(0);
+  QWidget *mainContainer = new QWidget(this);
+  QVBoxLayout *layout = new QVBoxLayout(mainContainer);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(0);
 
-	urlBar = new QLineEdit(this);
-	urlBar->setPlaceholderText("Enter URL");
+  urlBar = new QLineEdit(this);
+  urlBar->setPlaceholderText("Enter URL");
 
   connect(urlBar, &QLineEdit::returnPressed, this, [this]() {
     QString text = urlBar->text();
@@ -217,41 +227,44 @@ MainWindow::MainWindow() : QMainWindow() {
   connect(tabBar, &QTabBar::tabCloseRequested, this,
           &MainWindow::slotShortcutCloseTab);
 
-  // Ctrl + Q
-  keyCtrlQ = new QShortcut(this);                       // Initialize the object
-  keyCtrlQ->setKey(QKeySequence(Qt::CTRL | Qt::Key_Q)); // Set the key code
-  // connect handler to keypress
-  connect(keyCtrlQ, SIGNAL(activated()), this, SLOT(slotShortcutCtrlQ()));
-
-  keyBack = new QShortcut(this);
-  keyBack->setKey(QKeySequence(Qt::CTRL | Qt::Key_Left));
-  connect(keyBack, SIGNAL(activated()), this, SLOT(slotShortcutBack()));
-
-  keyForward = new QShortcut(this);
-  keyForward->setKey(QKeySequence(Qt::CTRL | Qt::Key_Right));
-  connect(keyForward, SIGNAL(activated()), this, SLOT(slotShortcutForward()));
-
-  keyCtrlT = new QShortcut(this);
-  keyCtrlT->setKey(QKeySequence(Qt::CTRL | Qt::Key_T));
-  connect(keyCtrlT, &QShortcut::activated, this,
-          [this]() { addNewTab(optStartupUrl); });
-
-  keyCtrlW = new QShortcut(this);
-  keyCtrlW->setKey(QKeySequence(Qt::CTRL | Qt::Key_W));
-  connect(keyCtrlW, &QShortcut::activated, this,
-          [this]() { slotShortcutCloseTab(); });
-
-  keyCtrlL = new QShortcut(this);
-  keyCtrlL->setKey(QKeySequence(Qt::CTRL | Qt::Key_L));
-  connect(keyCtrlL, &QShortcut::activated, this, [this]() {
+  // Default shortcuts
+  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q),
+              [this]() { slotShortcutCtrlQ(); });
+  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_Left),
+              [this]() { slotShortcutBack(); });
+  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_Right),
+              [this]() { slotShortcutForward(); });
+  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_T),
+              [this]() { addNewTab(optStartupUrl); });
+  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_W),
+              [this]() { slotShortcutCloseTab(); });
+  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_L), [this]() {
     urlBar->setFocus();
     urlBar->selectAll();
   });
 
-  QTimer::singleShot(0, this, SLOT(loadStartupUrl()));
+  if (adblock) {
+    adblockMgr = new AdBlockManager(adblockCfg, this);
+    QWebEngineProfile::defaultProfile()->setUrlRequestInterceptor(
+        adblockMgr->interceptor());
+    // Hold the first nav until cached lists are in so first page is filtered,
+    // but never longer than grace Whichever fires first wins
+    connect(adblockMgr, &AdBlockManager::settled, this,
+            &MainWindow::loadStartupUrl);
+    QTimer::singleShot(kAdblockStartupGraceMs, this,
+                       &MainWindow::loadStartupUrl);
+    adblockMgr->start();
+  } else {
+    QTimer::singleShot(0, this, &MainWindow::loadStartupUrl);
+  }
 }
 
 MainWindow::~MainWindow() {
+  // Detach so Qt cant call interceptor then let manager go
+  // This might wait as it needs a list build that is still running
+  QWebEngineProfile::defaultProfile()->setUrlRequestInterceptor(nullptr);
+  delete adblockMgr;
+  adblockMgr = nullptr;
   qDebug() << "main window destroyed";
   destroy();
 }
@@ -271,9 +284,22 @@ void MainWindow::loadUrl(QString url) {
   }
 }
 
-void MainWindow::loadStartupUrl() { loadUrl(optStartupUrl); }
+void MainWindow::loadStartupUrl() {
+  if (startupLoaded)
+    return;
+  startupLoaded = true;
+  loadUrl(optStartupUrl);
+}
 
 void MainWindow::loadConfig() {
+  // Ad blocking defaults. These must be set before the early returns below so
+  // a missing or broken config.json still gets a working, default setup.
+  adblockCfg.download = true;
+  adblockCfg.lists = AdBlockConfig::defaultLists();
+  adblockCfg.cacheDir = AdBlockConfig::defaultCacheDir();
+  adblockCfg.resourcesUrl = AdBlockConfig::defaultResourcesUrl();
+  adblockCfg.scriptletHosts = AdBlockConfig::defaultScriptletHosts();
+
   bool haveUrlInCmdLine = false;
   // Check for url in argv
   if (qApp->arguments().size() > 1) {
@@ -288,25 +314,136 @@ void MainWindow::loadConfig() {
   }
   QByteArray configData = configFile.readAll();
   configFile.close();
-  QJsonDocument configJson = QJsonDocument::fromJson(configData);
+  QJsonParseError parseErr;
+  QJsonDocument configJson = QJsonDocument::fromJson(configData, &parseErr);
+  if (parseErr.error != QJsonParseError::NoError) {
+    qDebug() << "JSON parse error" << parseErr.errorString();
+    return;
+  }
   QJsonObject configObject = configJson.object();
   // Load url
   if (configObject.contains("url") && (!haveUrlInCmdLine)) {
-    optStartupUrl = configObject["url"].toString();
+    if (!configObject["url"].isString()) {
+      qDebug() << "Expected url to be a string, ignoring";
+    } else {
+      optStartupUrl = configObject["url"].toString();
+    }
   }
 
   // Load window size
   if (configObject.contains("width")) {
-    optWidth = configObject["width"].toInt();
+    if (!configObject["width"].isDouble()) {
+      qDebug() << "Expected width to be an int. Ignoring";
+    } else {
+      optWidth = configObject["width"].toInt();
+    }
   }
   if (configObject.contains("height")) {
-    optHeight = configObject["height"].toInt();
+    if (!configObject["height"].isDouble()) {
+      qDebug() << "Expected height to be an int. Ignoring";
+    } else {
+      optHeight = configObject["height"].toInt();
+    }
   }
   // Load proxy settings
   if (configObject.contains("proxyHost")) {
-    optProxyHost = configObject["proxyHost"].toString();
+    if (!configObject["proxyHost"].isString()) {
+      qDebug() << "Expected proxyHost to be a string. Ignoring";
+    } else {
+      optProxyHost = configObject["proxyHost"].toString();
+    }
   }
   if (configObject.contains("proxyPort")) {
-    optProxyPort = configObject["proxyPort"].toInt();
+    if (!configObject["proxyPort"].isDouble()) {
+      qDebug() << "Expected proxyPort to be an int. Ignoring";
+    } else {
+      optProxyPort = configObject["proxyPort"].toInt();
+    }
+  }
+
+  if (configObject.contains("adblock")) {
+    if (!configObject["adblock"].isBool()) {
+      qDebug() << "Expected adblock to be a bool. Ignoring";
+    } else {
+      adblock = configObject["adblock"].toBool();
+    }
+  }
+  if (configObject.contains("adblockDownload")) {
+    if (!configObject["adblockDownload"].isBool()) {
+      qDebug() << "Expected adblockDownload to be a bool. Ignoring";
+    } else {
+      adblockCfg.download = configObject["adblockDownload"].toBool();
+    }
+  }
+  if (configObject.contains("adblockTtlHours")) {
+    if (!configObject["adblockTtlHours"].isDouble()) {
+      qDebug() << "Expected adblockTtlHours to be an int. Ignoring";
+    } else {
+      adblockCfg.ttlHours = qMax(1, configObject["adblockTtlHours"].toInt());
+    }
+  }
+  if (configObject.contains("adblockResources")) {
+    if (!configObject["adblockResources"].isString()) {
+      qDebug() << "Expected adblockResources to be a string. Ignoring";
+    } else {
+      const QString u = configObject["adblockResources"].toString();
+      if (u.isEmpty() || u.startsWith("https://") || u.startsWith("http://")) {
+        adblockCfg.resourcesUrl = u;
+      } else {
+        qDebug() << "Ignoring adblockResources that is not an http(s) URL:" << u;
+      }
+    }
+  }
+  if (configObject.contains("adblockScriptletHosts")) {
+    if (!configObject["adblockScriptletHosts"].isArray()) {
+      qDebug() << "adblockScriptletHosts should be an array of hostnames. Ignoring";
+    } else {
+      QStringList hosts;
+      for (const QJsonValue &v : configObject["adblockScriptletHosts"].toArray()) {
+        const QString h = v.toString().trimmed().toLower();
+        if (!h.isEmpty()) {
+          hosts << h; // validated again where the script is built
+        }
+      }
+      adblockCfg.scriptletHosts = hosts;
+    }
+  }
+  if (configObject.contains("adblockLists")) {
+    if (!configObject["adblockLists"].isArray()) {
+      qDebug() << "adblockLists should be an array of URLs. Ignoring";
+    } else {
+      QStringList urls;
+      for (const QJsonValue &v : configObject["adblockLists"].toArray()) {
+        const QString u = v.toString();
+        if (u.startsWith("https://") || u.startsWith("http://")) {
+          urls << u;
+        } else {
+          qDebug() << "Ignoring adblock list that is not an http(s) URL:" << u;
+        }
+      }
+      adblockCfg.lists = urls; // may be empty: local folders only
+    }
+  }
+  if (configObject.contains("adblockDirs")) {
+    if (!configObject["adblockDirs"].isArray()) {
+      qDebug() << "adblockDirs should be an array of paths. Ignoring";
+    } else {
+      for (const QJsonValue &v : configObject["adblockDirs"].toArray()) {
+        if (!v.isString()) {
+          qDebug() << "Ignoring non-string adblock directory";
+          continue;
+        }
+        QString p = v.toString();
+        if (p == "~" || p.startsWith("~/")) {
+          p = QDir::homePath() + p.mid(1);
+        }
+        // Absolute now, while the working directory is still the config dir.
+        p = QDir(p).absolutePath();
+        if (!QDir(p).exists()) {
+          qWarning() << "adblock directory does not exist (yet):" << p;
+        }
+        adblockCfg.localDirs << p; // kept even if missing; skipped at load
+      }
+    }
   }
 }
