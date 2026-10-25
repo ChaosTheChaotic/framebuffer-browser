@@ -59,12 +59,15 @@ void MainWindow::writeSettings() {
 }
 
 void MainWindow::fullScreenRequested(QWebEngineFullScreenRequest request) {
-  // fullscreen on video players
-
-  if (request.toggleOn() && !this->isFullScreen()) {
+  if (request.toggleOn()) {
+    prevState = windowState();
+    tabBar->hide();
+    urlBar->hide();
     this->showFullScreen();
   } else {
-    this->showNormal();
+    tabBar->show();
+    urlBar->show();
+    this->setWindowState(prevState);
   }
   request.accept();
 }
@@ -128,7 +131,8 @@ void MainWindow::addNewTab(const QString &url) {
   configureWebView(webView);
 
   webView->page()->profile()->setHttpUserAgent(
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36");
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+      "Chrome/140.0.0.0 Safari/537.36");
 
   connect(webView->page(), &QWebEnginePage::fullScreenRequested, this,
           &MainWindow::fullScreenRequested);
@@ -390,16 +394,19 @@ void MainWindow::loadConfig() {
       if (u.isEmpty() || u.startsWith("https://") || u.startsWith("http://")) {
         adblockCfg.resourcesUrl = u;
       } else {
-        qDebug() << "Ignoring adblockResources that is not an http(s) URL:" << u;
+        qDebug() << "Ignoring adblockResources that is not an http(s) URL:"
+                 << u;
       }
     }
   }
   if (configObject.contains("adblockScriptletHosts")) {
     if (!configObject["adblockScriptletHosts"].isArray()) {
-      qDebug() << "adblockScriptletHosts should be an array of hostnames. Ignoring";
+      qDebug()
+          << "adblockScriptletHosts should be an array of hostnames. Ignoring";
     } else {
       QStringList hosts;
-      for (const QJsonValue &v : configObject["adblockScriptletHosts"].toArray()) {
+      for (const QJsonValue &v :
+           configObject["adblockScriptletHosts"].toArray()) {
         const QString h = v.toString().trimmed().toLower();
         if (!h.isEmpty()) {
           hosts << h; // validated again where the script is built

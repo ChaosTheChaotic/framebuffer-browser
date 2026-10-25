@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.29)
 project(fbbrowser LANGUAGES CXX)
 
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+
+add_compile_options(
+    $<$<CONFIG:Release>:$<$<CXX_COMPILER_ID:MSVC>:/O2>>
+    $<$<CONFIG:Release>:$<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>>:-O3>>
+)
+
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 set(CMAKE_AUTOMOC ON)

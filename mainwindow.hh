@@ -26,8 +26,8 @@ class MainWindow : public QMainWindow {
   int optHeight = 0;
   QString optProxyHost = "";
   int optProxyPort = 0;
-  bool adblock = true;       // master switch ("adblock" in config.json)
-  AdBlockConfig adblockCfg;  // download toggle, lists, local dirs, cache dir
+  bool adblock = true;      // master switch ("adblock" in config.json)
+  AdBlockConfig adblockCfg; // download toggle, lists, local dirs, cache dir
 
 public:
   QTabBar *tabBar;
@@ -57,6 +57,7 @@ private:
   QSettings *appSettings;
   AdBlockManager *adblockMgr = nullptr;
   bool startupLoaded = false;
+  Qt::WindowStates prevState = Qt::WindowNoState;
 
 protected:
   void closeEvent(QCloseEvent *) override;
