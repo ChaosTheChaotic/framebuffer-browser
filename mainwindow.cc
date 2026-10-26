@@ -53,7 +53,7 @@ inline void readOpt(const QJsonObject &o, const char *key, T &out) {
 
 template <typename Filter>
 inline void readStringArray(const QJsonObject &o, const char *key,
-                            QStringList &out, Filter filter, const char *what) {
+                            QStringList &out, const Filter &filter, const char *what) {
   const auto it = o.constFind(QLatin1String(key));
   if (it == o.constEnd())
     return;
@@ -427,8 +427,9 @@ void MainWindow::loadConfig() {
       o, "adblockScriptletHosts", adblockCfg.scriptletHosts,
       [](QString s) -> std::optional<QString> {
         s = s.trimmed().toLower();
-        return s.isEmpty() ? std::nullopt
-                           : std::optional<QString>(std::move(s));
+        if (s.isEmpty())
+          return std::nullopt;
+        return std::optional<QString>(std::move(s));
       },
       "hostnames");
 

@@ -209,7 +209,7 @@ JobResult runJob(const AdBlockConfig &cfg, const QList<Fetched> &fresh,
       fbb_adblock_ready(engine)) {
     if (metaDirty)
       saveMeta(metaPath, meta); // renewed timestamps still have to persist
-    out.meta = meta;
+    out.meta = std::move(meta);
     out.unchanged = true;
     return out;
   }
@@ -282,7 +282,7 @@ JobResult runJob(const AdBlockConfig &cfg, const QList<Fetched> &fresh,
       }
     }
   }
-  out.meta = meta;
+  out.meta = std::move(meta);
   return out;
 }
 
@@ -382,9 +382,8 @@ void AdBlockManager::startJob(QList<Fetched> fresh) {
   jobRunning_ = true;
   QList<Fetched> batch = std::exchange(queued_, {});
   watcher_.setFuture(QtConcurrent::run(
-      [cfg = cfg_, batch, sig = localSig_, h = interceptor_->handle()] {
-        return runJob(cfg, batch, sig, h);
-      }));
+      [cfg = cfg_, batch = std::move(batch), sig = std::move(localSig_),
+       h = interceptor_->handle()] { return runJob(cfg, batch, sig, h); }));
 }
 
 void AdBlockManager::onJobFinished() {
