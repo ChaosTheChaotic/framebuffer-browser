@@ -101,7 +101,7 @@ public:
   // Waits for a build that is still running
   ~AdBlockManager() override;
 
-  AdBlockInterceptor *interceptor() { return interceptor_; }
+  AdBlockInterceptor *interceptor() { return interceptor_.get(); }
 
   // Returns immediately. Loads the cached lists in the background and, if
   // downloading is enabled, refreshes whatever has expired afterwards.
@@ -123,7 +123,8 @@ private:
   void scheduleNextCheck();
 
   AdBlockConfig cfg_;
-  AdBlockInterceptor *interceptor_;
+	QStringList sources_;
+  std::unique_ptr<AdBlockInterceptor> interceptor_;
   QFutureWatcher<JobResult> watcher_;
   QTimer refreshTimer_;
   QNetworkAccessManager *nam_ = nullptr;

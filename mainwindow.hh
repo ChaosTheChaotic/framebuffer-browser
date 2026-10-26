@@ -44,7 +44,6 @@ public:
 
 public slots:
   void loadStartupUrl();
-  void onLoadStarted();
   void slotShortcutCtrlQ();
   void slotShortcutBack();
   void slotShortcutForward();
@@ -76,7 +75,7 @@ private:
   Qt::WindowStates prevState = Qt::WindowNoState;
 
 protected:
-  void closeEvent(QCloseEvent *) override;
+  // void closeEvent(QCloseEvent *) override;
 };
 
 #endif // BROWSERWINDOW_H

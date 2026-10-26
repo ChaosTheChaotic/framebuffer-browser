@@ -34,7 +34,7 @@ constexpr int kFirstRetryMs = 15 * 1000;         // offline at boot? retry soon,
 constexpr int kMaxRetryMs = 60 * 60 * 1000;      // then back off up to 1 h
 constexpr int kTransferTimeoutMs = 30 * 1000;
 
-const char *typeName(QWebEngineUrlRequestInfo::ResourceType t) {
+constexpr const char *typeName(QWebEngineUrlRequestInfo::ResourceType t) {
   using R = QWebEngineUrlRequestInfo;
   switch (t) {
   case R::ResourceTypeSubFrame:
@@ -63,17 +63,17 @@ const char *typeName(QWebEngineUrlRequestInfo::ResourceType t) {
 }
 
 QString cachePathFor(const QString &listDir, const QString &url) {
+  static const QRegularExpression unsafe(QStringLiteral("[^A-Za-z0-9._-]"));
   QString base = QFileInfo(QUrl(url).path()).fileName();
-  base.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9._-]")),
-               QStringLiteral("_"));
+  base.replace(unsafe, QStringLiteral("_"));
   if (base.isEmpty())
     base = QStringLiteral("list.txt");
   const QByteArray h =
       QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Sha1)
           .toHex()
           .left(10);
-  return listDir + QLatin1Char('/') + QString::fromLatin1(h) +
-         QLatin1Char('-') + base;
+  return QDir(listDir).filePath(QString::fromLatin1(h) + QLatin1Char('-') +
+                                base);
 }
 
 qint64 ttlFromHeader(const QByteArray &body, qint64 fallbackSecs) {
@@ -81,8 +81,8 @@ qint64 ttlFromHeader(const QByteArray &body, qint64 fallbackSecs) {
       QStringLiteral(R"(^!\s*Expires:\s*(\d+)\s*(day|hour))"),
       QRegularExpression::MultilineOption |
           QRegularExpression::CaseInsensitiveOption);
-  const QString head = QString::fromLatin1(
-      body.constData(), int(std::min<qsizetype>(body.size(), 4096)));
+  const auto headLen = qMin<qsizetype>(body.size(), 4096);
+  const QString head = QString::fromLatin1(body.constData(), headLen);
   qint64 secs = fallbackSecs;
   const QRegularExpressionMatch m = re.match(head);
   if (m.hasMatch()) {
@@ -164,44 +164,150 @@ QByteArray localSignature(const QStringList &dirs) {
   return h.result();
 }
 
-// Persist fresh downloads and if anything the engine is built from changed,
-// read every list, build the engine and swap it in. The initial load (empty
-// fresh) always builds. A refresh cycle in which every list answered 304 Not
-// Modified, and no local file changed, leaves the running engine alone as
-// rebuilding would burn a second of CPU and a transient second copy of the
-// engine's memory to produce an identical result.
-JobResult runJob(const AdBlockConfig &cfg, const QList<Fetched> &fresh,
-                 const QByteArray &prevLocalSig, Fbbadblock *engine) {
+// Persist freshly downloaded lists. Returns true when the on disk rules the
+// engine is built from actually changed (a body was written). 304s renew
+// timestamps without changing the rule text; failed writes leave the old
+// meta entry alone so the next cycle retries them.
+bool applyFresh(const AdBlockConfig &cfg, const QString &listDir,
+                const QList<Fetched> &fresh, MetaMap &meta) {
+  if (fresh.isEmpty())
+    return false;
+  QDir().mkpath(listDir);
+  bool rulesChanged = false;
+  for (const Fetched &f : fresh) {
+    ListMeta m = meta.value(f.url);
+    if (f.notModified) {
+      m.fetched = f.fetchedAt; // etag / ttl stay as they were
+    } else {
+      if (!writeAtomic(cachePathFor(listDir, f.url), f.body)) {
+        qWarning() << "adblock: cannot write cache file for" << f.url;
+        continue; // keep the old meta entry so the next cycle retries
+      }
+      m.etag = f.etag;
+      m.lastModified = f.lastModified;
+      m.fetched = f.fetchedAt;
+      m.ttl = ttlFromHeader(f.body, qint64(cfg.ttlHours) * 3600);
+      rulesChanged = true;
+    }
+    meta.insert(f.url, m);
+  }
+  return rulesChanged;
+}
+
+// Read every cached list and the resources file into all/resources,
+// counting each successful list file into listCount. Drops meta entries
+// whose cache file has gone missing (otherwise a stale entry would make us
+// skip the download forever). Returns whether meta was modified.
+bool readCachedRules(const AdBlockConfig &cfg, const QString &listDir,
+                     MetaMap &meta, QByteArray &all, QByteArray &resources,
+                     int &listCount) {
+  auto append = [&](const QByteArray &data) {
+    all += data;
+    if (!data.endsWith('\n'))
+      all += '\n';
+    ++listCount;
+  };
+
+  bool metaDirty = false;
+  for (const QString &url : cfg.lists) {
+    QFile file(cachePathFor(listDir, url));
+    if (!file.open(QIODevice::ReadOnly)) {
+      if (meta.remove(url) > 0)
+        metaDirty = true;
+      continue;
+    }
+    append(file.readAll());
+  }
+  if (!cfg.resourcesUrl.isEmpty()) {
+    QFile file(cachePathFor(listDir, cfg.resourcesUrl));
+    if (file.open(QIODevice::ReadOnly))
+      resources = file.readAll();
+    else if (meta.remove(cfg.resourcesUrl) > 0)
+      metaDirty = true;
+  }
+  return metaDirty;
+}
+
+// Drop meta entries for URLs we no longer want, and delete their cache
+// files. Returns whether meta was modified.
+bool pruneMeta(const QString &listDir, const QStringList &wanted,
+               MetaMap &meta) {
+  bool pruned = false;
+  for (auto it = meta.begin(); it != meta.end();) {
+    if (wanted.contains(it.key())) {
+      ++it;
+    } else {
+      QFile::remove(cachePathFor(listDir, it.key()));
+      it = meta.erase(it);
+      pruned = true;
+    }
+  }
+  return pruned;
+}
+
+// Concatenate every local *.txt into all, counting each one.
+void appendLocalRules(const QStringList &dirs, QByteArray &all,
+                      int &listCount) {
+  for (const QString &path : dirs) {
+    const QDir dir(path);
+    if (!dir.exists())
+      continue;
+    for (const QString &name :
+         dir.entryList({QStringLiteral("*.txt")}, QDir::Files, QDir::Name)) {
+      QFile file(dir.filePath(name));
+      if (!file.open(QIODevice::ReadOnly))
+        continue;
+      const QByteArray data = file.readAll();
+      all += data;
+      if (!data.endsWith('\n'))
+        all += '\n';
+      ++listCount;
+    }
+  }
+}
+
+// Rebuild the engine from rules + resources, then ask it what each
+// scriptlet host needs. Returns whether the build succeeded.
+bool buildEngine(Fbbadblock *engine, const AdBlockConfig &cfg,
+                 const QByteArray &rules, const QByteArray &resources,
+                 QList<HostScript> &scripts) {
+  if (rules.isEmpty())
+    return false;
+  if (!fbb_adblock_load(engine, rules.constData(), size_t(rules.size()),
+                        resources.constData(), size_t(resources.size())))
+    return false;
+  for (const QString &host : cfg.scriptletHosts) {
+    const QByteArray url = "https://" + host.toUtf8() + "/";
+    char *js = fbb_adblock_page_script(engine, url.constData());
+    if (!js)
+      continue;
+    scripts.append(HostScript{host, QString::fromUtf8(js)});
+    fbb_adblock_string_free(js);
+  }
+  return true;
+}
+
+// Persist fresh downloads and, if anything the engine is built from
+// changed, read every list, build the engine and swap it in. The initial
+// load (empty fresh) always builds. A refresh cycle in which every list
+// answered 304 Not Modified, and no local file changed, leaves the running
+// engine alone: rebuilding would burn a second of CPU and a transient
+// second copy of the engine's memory to produce an identical result.
+JobResult runJob(const AdBlockConfig &cfg, const QStringList &sources,
+                 const QList<Fetched> &fresh, const QByteArray &prevLocalSig,
+                 Fbbadblock *engine) {
   JobResult out;
   const bool haveCache = !cfg.cacheDir.isEmpty();
   const QString listDir = cfg.cacheDir + QStringLiteral("/lists");
   const QString metaPath = cfg.cacheDir + QStringLiteral("/meta.json");
 
   MetaMap meta;
-  bool metaDirty = false;
+  bool metaDirty = !fresh.isEmpty();
   bool listsChanged = fresh.isEmpty();
   if (haveCache) {
     meta = loadMeta(metaPath);
-    if (!fresh.isEmpty())
-      QDir().mkpath(listDir);
-    for (const Fetched &f : fresh) {
-      ListMeta m = meta.value(f.url);
-      if (f.notModified) {
-        m.fetched = f.fetchedAt; // etag / ttl stay as they were
-      } else {
-        if (!writeAtomic(cachePathFor(listDir, f.url), f.body)) {
-          qWarning() << "adblock: cannot write cache file for" << f.url;
-          continue;
-        }
-        m.etag = f.etag;
-        m.lastModified = f.lastModified;
-        m.fetched = f.fetchedAt;
-        m.ttl = ttlFromHeader(f.body, qint64(cfg.ttlHours) * 3600);
-        listsChanged = true;
-      }
-      meta.insert(f.url, m);
-      metaDirty = true;
-    }
+    if (applyFresh(cfg, listDir, fresh, meta))
+      listsChanged = true;
   }
 
   out.localSig = localSignature(cfg.localDirs);
@@ -215,73 +321,18 @@ JobResult runJob(const AdBlockConfig &cfg, const QList<Fetched> &fresh,
   }
 
   QByteArray all;
-  auto append = [&](const QByteArray &data) {
-    all += data;
-    if (!data.endsWith('\n'))
-      all += '\n';
-    ++out.lists;
-  };
-
-  QByteArray resources; // scriptlet bodies (not part of the rule text)
+  QByteArray resources;
   if (haveCache) {
-    for (const QString &url : cfg.lists) {
-      QFile file(cachePathFor(listDir, url));
-      if (!file.open(QIODevice::ReadOnly)) {
-        // Metadata without a file would make us skip the download forever.
-        metaDirty |= meta.remove(url) > 0;
-        continue;
-      }
-      append(file.readAll());
-    }
-    if (!cfg.resourcesUrl.isEmpty()) {
-      QFile file(cachePathFor(listDir, cfg.resourcesUrl));
-      if (file.open(QIODevice::ReadOnly))
-        resources = file.readAll();
-      else
-        metaDirty |= meta.remove(cfg.resourcesUrl) > 0;
-    }
-    const QStringList wanted = cfg.sources();
-    for (auto it = meta.begin(); it != meta.end();) { // lists no longer wanted
-      if (wanted.contains(it.key())) {
-        ++it;
-      } else {
-        QFile::remove(cachePathFor(listDir, it.key()));
-        it = meta.erase(it);
-        metaDirty = true;
-      }
-    }
+    if (readCachedRules(cfg, listDir, meta, all, resources, out.lists))
+      metaDirty = true;
+    if (pruneMeta(listDir, sources, meta))
+      metaDirty = true;
     if (metaDirty)
       saveMeta(metaPath, meta);
   }
+  appendLocalRules(cfg.localDirs, all, out.lists);
 
-  for (const QString &path : cfg.localDirs) {
-    const QDir dir(path);
-    if (!dir.exists())
-      continue;
-    for (const QString &name :
-         dir.entryList({QStringLiteral("*.txt")}, QDir::Files, QDir::Name)) {
-      QFile file(dir.filePath(name));
-      if (file.open(QIODevice::ReadOnly))
-        append(file.readAll());
-    }
-  }
-
-  if (!all.isEmpty()) {
-    out.built =
-        fbb_adblock_load(engine, all.constData(), size_t(all.size()),
-                         resources.constData(), size_t(resources.size()));
-    if (out.built) {
-      // Same worker thread, same engine, ask what each scriptlet host needs.
-      for (const QString &host : cfg.scriptletHosts) {
-        const QByteArray url = "https://" + host.toUtf8() + "/";
-        char *js = fbb_adblock_page_script(engine, url.constData());
-        if (!js)
-          continue;
-        out.scripts.append(HostScript{host, QString::fromUtf8(js)});
-        fbb_adblock_string_free(js);
-      }
-    }
-  }
+  out.built = buildEngine(engine, cfg, all, resources, out.scripts);
   out.meta = std::move(meta);
   return out;
 }
@@ -334,6 +385,7 @@ AdBlockInterceptor::~AdBlockInterceptor() {
 }
 
 void AdBlockInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info) {
+  using namespace Qt::StringLiterals;
   // No engine yet (still loading)
   // Let it through instead of stalling the UI.
   if (!ready())
@@ -341,8 +393,8 @@ void AdBlockInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info) {
   if (info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypeMainFrame)
     return;
   const QUrl url = info.requestUrl();
-  if (url.scheme() != QLatin1String("http") &&
-      url.scheme() != QLatin1String("https"))
+  const QString scheme = url.scheme();
+  if (scheme != u"http"_s && scheme != u"https"_s)
     return;
   if (fbb_adblock_should_block(engine_, url.toEncoded().constData(),
                                info.firstPartyUrl().toEncoded().constData(),
@@ -354,17 +406,14 @@ AdBlockManager::AdBlockManager(AdBlockConfig cfg, QObject *parent)
     : QObject(parent), cfg_(std::move(cfg)),
       interceptor_(new AdBlockInterceptor), retryMs_(kFirstRetryMs) {
   refreshTimer_.setSingleShot(true);
+  sources_ = cfg_.sources();
   connect(&refreshTimer_, &QTimer::timeout, this,
           &AdBlockManager::checkForUpdates);
   connect(&watcher_, &QFutureWatcher<JobResult>::finished, this,
           &AdBlockManager::onJobFinished);
 }
 
-AdBlockManager::~AdBlockManager() {
-  watcher_.waitForFinished();
-  // MainWindow detaches the interceptor from the profile before this runs.
-  delete interceptor_;
-}
+AdBlockManager::~AdBlockManager() { watcher_.waitForFinished(); }
 
 void AdBlockManager::start() {
   installYoutubeScript(); // before the first navigation, needs no lists
@@ -382,8 +431,10 @@ void AdBlockManager::startJob(QList<Fetched> fresh) {
   jobRunning_ = true;
   QList<Fetched> batch = std::exchange(queued_, {});
   watcher_.setFuture(QtConcurrent::run(
-      [cfg = cfg_, batch = std::move(batch), sig = std::move(localSig_),
-       h = interceptor_->handle()] { return runJob(cfg, batch, sig, h); }));
+      [cfg = cfg_, sources = sources_, batch = std::move(batch),
+       sig = std::move(localSig_), h = interceptor_->handle()] {
+        return runJob(cfg, sources, batch, sig, h);
+      }));
 }
 
 void AdBlockManager::onJobFinished() {
@@ -419,7 +470,7 @@ void AdBlockManager::onJobFinished() {
 }
 
 void AdBlockManager::installScripts(const QList<HostScript> &scripts) {
-  static const QString prefix = QStringLiteral("fbb-adblock:");
+  static constexpr QLatin1String prefix("fbb-adblock:");
   QWebEngineScriptCollection *coll =
       QWebEngineProfile::defaultProfile()->scripts();
   // Replace what an earlier build installed
@@ -482,8 +533,7 @@ void AdBlockManager::checkForUpdates() {
 
   const qint64 now = QDateTime::currentSecsSinceEpoch();
   QStringList due;
-  const QStringList sources = cfg_.sources();
-  for (const QString &url : sources) {
+  for (const QString &url : sources_) {
     const auto it = meta_.constFind(url);
     if (it == meta_.constEnd() || now >= it->fetched + it->ttl)
       due << url;
@@ -526,7 +576,6 @@ void AdBlockManager::fetch(const QString &url) {
 }
 
 void AdBlockManager::onReply(QNetworkReply *reply, const QString &url) {
-  reply->deleteLater();
   const int status =
       reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
@@ -554,6 +603,7 @@ void AdBlockManager::onReply(QNetworkReply *reply, const QString &url) {
 
   if (--inFlight_ == 0)
     finishCycle();
+  reply->deleteLater();
 }
 
 void AdBlockManager::finishCycle() {

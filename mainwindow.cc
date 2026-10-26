@@ -10,7 +10,6 @@
 #include <QJsonObject>
 #include <QKeySequence>
 #include <QNetworkProxy>
-#include <QProcess>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWebEngineFullScreenRequest>
@@ -40,27 +39,26 @@ template <> struct JConv<QString> {
 
 // Assign if key exists and has right type, otherwise print
 template <typename T>
-inline void readOpt(const QJsonObject &o, const char *key, T &out) {
+void readOpt(const QJsonObject &o, const char *key, T &out) {
   const auto it = o.constFind(QLatin1String(key));
   if (it == o.constEnd())
     return;
   using C = JConv<T>;
   if (!C::ok(*it)) {
-    qDebug() << "Expected" << key << "to be" << C::what << ". Ignoring";
+    qWarning() << "Expected" << key << "to be" << C::what << ". Ignoring";
     return;
   }
   out = C::get(*it);
 }
 
 template <typename Filter>
-inline void readStringArray(const QJsonObject &o, const char *key,
-                            QStringList &out, const Filter &filter,
-                            const char *what) {
+void readStringArray(const QJsonObject &o, const char *key, QStringList &out,
+                     const Filter &filter, const char *what) {
   const auto it = o.constFind(QLatin1String(key));
   if (it == o.constEnd())
     return;
   if (!it->isArray()) {
-    qDebug() << key << "should be an array of" << what << ". Ignoring";
+    qWarning() << key << "should be an array of" << what << ". Ignoring";
     return;
   }
   QStringList result;
@@ -76,38 +74,17 @@ inline void readStringArray(const QJsonObject &o, const char *key,
 namespace {
 // How long first nav may be held whilst filter lists loaded
 constexpr int kAdblockStartupGraceMs = 5000;
-
 struct ShortcutDef {
   const char *name;
   QKeySequence seq;
   void (MainWindow::*slot)();
 };
 
-const ShortcutDef kShortcutTable[] = {
-    {"quit", QKeySequence(Qt::CTRL | Qt::Key_Q),
-     &MainWindow::slotShortcutCtrlQ},
-    {"back", QKeySequence(Qt::CTRL | Qt::Key_Left),
-     &MainWindow::slotShortcutBack},
-    {"forward", QKeySequence(Qt::CTRL | Qt::Key_Right),
-     &MainWindow::slotShortcutForward},
-    {"newTab", QKeySequence(Qt::CTRL | Qt::Key_T),
-     &MainWindow::slotShortcutNewTab},
-    {"closeTab", QKeySequence(Qt::CTRL | Qt::Key_W),
-     &MainWindow::slotShortcutCloseCurrentTab},
-    {"focusUrl", QKeySequence(Qt::CTRL | Qt::Key_L),
-     &MainWindow::slotShortcutFocusUrl},
-    {"reload", QKeySequence(Qt::CTRL | Qt::Key_R),
-     &MainWindow::slotShortcutReload},
-    {"exitFull", QKeySequence(Qt::Key_Escape),
-     &MainWindow::slotShortcutExitFullscreen},
-};
-
 } // namespace
 
-void MainWindow::closeEvent(QCloseEvent *) {
-  // writeSettings();
-  qDebug() << "closing2";
-}
+// void MainWindow::closeEvent(QCloseEvent *) {
+//   // writeSettings();
+// }
 
 void MainWindow::configureWebView(QWebEngineView *view) {
   view->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
@@ -149,6 +126,18 @@ void MainWindow::fullScreenRequested(QWebEngineFullScreenRequest request) {
 }
 
 void MainWindow::installShortcuts() {
+  const ShortcutDef kShortcutTable[] = {
+      {"quit", Qt::CTRL | Qt::Key_Q, &MainWindow::slotShortcutCtrlQ},
+      {"back", Qt::CTRL | Qt::Key_Left, &MainWindow::slotShortcutBack},
+      {"forward", Qt::CTRL | Qt::Key_Right, &MainWindow::slotShortcutForward},
+      {"newTab", Qt::CTRL | Qt::Key_T, &MainWindow::slotShortcutNewTab},
+      {"closeTab", Qt::CTRL | Qt::Key_W,
+       &MainWindow::slotShortcutCloseCurrentTab},
+      {"focusUrl", Qt::CTRL | Qt::Key_L, &MainWindow::slotShortcutFocusUrl},
+      {"reload", Qt::CTRL | Qt::Key_R, &MainWindow::slotShortcutReload},
+      {"exitFull", Qt::Key_Escape, &MainWindow::slotShortcutExitFullscreen},
+  };
+
   for (const auto &def : kShortcutTable) {
     const QByteArray name(def.name);
     ShortcutBinding &b = bindings[name];
@@ -201,27 +190,22 @@ QKeySequence MainWindow::shortcutFor(const QByteArray &name) const {
   return it == bindings.constEnd() ? QKeySequence() : it->seq;
 }
 
-inline void MainWindow::slotShortcutCtrlQ() {
-  qDebug() << "closing1";
+void MainWindow::slotShortcutCtrlQ() {
   // writeSettings();
   QApplication::exit();
 }
 
-inline void MainWindow::slotShortcutBack() {
-  if (QWebEngineView *view = currentWebView()) {
-    qDebug() << "Going back..";
+void MainWindow::slotShortcutBack() {
+  if (QWebEngineView *view = currentWebView())
     view->page()->triggerAction(QWebEnginePage::Back);
-  }
 }
 
-inline void MainWindow::slotShortcutForward() {
-  if (QWebEngineView *view = currentWebView()) {
-    qDebug() << "Going forward..";
+void MainWindow::slotShortcutForward() {
+  if (QWebEngineView *view = currentWebView())
     view->page()->triggerAction(QWebEnginePage::Forward);
-  }
 }
 
-inline void MainWindow::slotShortcutCloseTab(int idx) {
+void MainWindow::slotShortcutCloseTab(int idx) {
   if (idx < 0)
     idx = tabBar->currentIndex();
   if (idx >= 0 && idx < stackedWidget->count()) {
@@ -244,18 +228,14 @@ void MainWindow::slotShortcutFocusUrl() {
   urlBar->selectAll();
 }
 
-inline void MainWindow::slotShortcutReload() {
-  if (QWebEngineView *view = currentWebView()) {
-    qDebug() << "Reloading...";
+void MainWindow::slotShortcutReload() {
+  if (QWebEngineView *view = currentWebView())
     view->reload();
-  }
 }
 
-inline void MainWindow::slotShortcutExitFullscreen() {
-  if (QWebEngineView *view = currentWebView()) {
-    qDebug() << "Exiting fullscreen...";
+void MainWindow::slotShortcutExitFullscreen() {
+  if (QWebEngineView *view = currentWebView())
     view->page()->triggerAction(QWebEnginePage::ExitFullScreen);
-  }
 }
 
 QWebEngineView *MainWindow::currentWebView() const {
@@ -266,13 +246,8 @@ void MainWindow::addNewTab(const QString &url) {
   QWebEngineView *webView = new QWebEngineView(stackedWidget);
   configureWebView(webView);
 
-  webView->page()->profile()->setHttpUserAgent(
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-      "Chrome/140.0.0.0 Safari/537.36");
-
   connect(webView->page(), &QWebEnginePage::fullScreenRequested, this,
           &MainWindow::fullScreenRequested);
-  connect(webView, SIGNAL(loadStarted()), this, SLOT(onLoadStarted()));
 
   int idx = stackedWidget->addWidget(webView);
   tabBar->addTab("New Tab");
@@ -309,7 +284,7 @@ MainWindow::MainWindow() : QMainWindow() {
 
   appSettings = new QSettings(this);
 
-  if (optProxyHost != "") {
+  if (!optProxyHost.isEmpty()) {
     qDebug() << "Setting proxy to" << optProxyHost << ":" << optProxyPort;
     QNetworkProxy proxy;
     proxy.setType(QNetworkProxy::HttpProxy);
@@ -350,7 +325,7 @@ MainWindow::MainWindow() : QMainWindow() {
   layout->addWidget(stackedWidget);
   setCentralWidget(mainContainer);
 
-  connect(tabBar, &QTabBar::currentChanged, this, [this](int index) {
+  connect(tabBar, &QTabBar::currentChanged, this, [this](int) {
     if (QWebEngineView *view = currentWebView()) {
       urlBar->setText(view->url().toString());
     } else {
@@ -362,6 +337,10 @@ MainWindow::MainWindow() : QMainWindow() {
           &MainWindow::slotShortcutCloseTab);
 
   installShortcuts();
+
+  QWebEngineProfile::defaultProfile()->setHttpUserAgent(
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+      "Chrome/140.0.0.0 Safari/537.36");
 
   if (adblock) {
     adblockMgr = new AdBlockManager(adblockCfg, this);
@@ -379,13 +358,7 @@ MainWindow::MainWindow() : QMainWindow() {
 
 MainWindow::~MainWindow() {
   QWebEngineProfile::defaultProfile()->setUrlRequestInterceptor(nullptr);
-  delete adblockMgr;
-  adblockMgr = nullptr;
-  qDebug() << "main window destroyed";
-  destroy();
 }
-
-void MainWindow::onLoadStarted() { qDebug() << "onLoadStarted"; }
 
 void MainWindow::loadUrl(QString url) {
   if (stackedWidget->count() == 0) {
@@ -395,7 +368,6 @@ void MainWindow::loadUrl(QString url) {
     if (url.startsWith("./")) {
       url = "file:///" + QDir::currentPath() + QDir::separator() + url.mid(2);
     }
-    qDebug() << "Loading URL in current tab:" << url;
     view->load(QUrl(url));
   }
 }
@@ -420,14 +392,14 @@ void MainWindow::loadConfig() {
 
   QFile configFile("config.json");
   if (!configFile.open(QIODevice::ReadOnly)) {
-    qDebug() << "Could not open config.json";
+    qWarning() << "Could not open config.json";
     return;
   }
   QJsonParseError parseErr;
   const QJsonObject o =
       QJsonDocument::fromJson(configFile.readAll(), &parseErr).object();
   if (parseErr.error != QJsonParseError::NoError) {
-    qDebug() << "JSON parse error" << parseErr.errorString();
+    qWarning() << "JSON parse error" << parseErr.errorString();
     return;
   }
 
@@ -445,20 +417,20 @@ void MainWindow::loadConfig() {
     if (it->isDouble())
       adblockCfg.ttlHours = qMax(1, it->toInt());
     else
-      qDebug() << "Expected adblockTtlHours to be an int. Ignoring";
+      qWarning() << "Expected adblockTtlHours to be an int. Ignoring";
   }
 
   if (auto it = o.constFind(QLatin1String("adblockResources"));
       it != o.constEnd()) {
     if (!it->isString()) {
-      qDebug() << "Expected adblockResources to be a string. Ignoring";
+      qWarning() << "Expected adblockResources to be a string. Ignoring";
     } else {
       const QString u = it->toString();
       if (u.isEmpty() || u.startsWith("https://") || u.startsWith("http://"))
         adblockCfg.resourcesUrl = u;
       else
-        qDebug() << "Ignoring adblockResources that is not an http(s) URL:"
-                 << u;
+        qWarning() << "Ignoring adblockResources that is not an http(s) URL:"
+                   << u;
     }
   }
 
@@ -477,7 +449,7 @@ void MainWindow::loadConfig() {
       [](const QString &s) -> std::optional<QString> {
         if (s.startsWith("https://") || s.startsWith("http://"))
           return s;
-        qDebug() << "Ignoring adblock list that is not an http(s) URL:" << s;
+        qWarning() << "Ignoring adblock list that is not an http(s) URL:" << s;
         return std::nullopt;
       },
       "http(s) URLs");
