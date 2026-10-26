@@ -138,14 +138,14 @@ void MainWindow::addShortcut(const QKeySequence &keySeq,
 }
 
 // Slot handler for Ctrl + Q
-void MainWindow::slotShortcutCtrlQ() {
+inline void MainWindow::slotShortcutCtrlQ() {
   qDebug() << "closing1";
   // writeSettings();
   QApplication::exit();
 }
 
 // Slot handler for Ctrl + Left
-void MainWindow::slotShortcutBack() {
+inline void MainWindow::slotShortcutBack() {
   if (QWebEngineView *view = currentWebView()) {
     qDebug() << "Going back..";
     view->page()->triggerAction(QWebEnginePage::Back);
@@ -153,7 +153,7 @@ void MainWindow::slotShortcutBack() {
 }
 
 // Slot handler for Ctrl + Right
-void MainWindow::slotShortcutForward() {
+inline void MainWindow::slotShortcutForward() {
   if (QWebEngineView *view = currentWebView()) {
     qDebug() << "Going forward..";
     view->page()->triggerAction(QWebEnginePage::Forward);
@@ -161,7 +161,7 @@ void MainWindow::slotShortcutForward() {
 }
 
 // Slot handler for Ctrl + W
-void MainWindow::slotShortcutCloseTab(int idx) {
+inline void MainWindow::slotShortcutCloseTab(int idx) {
   if (idx < 0) {
     idx = tabBar->currentIndex();
   }
@@ -173,6 +173,20 @@ void MainWindow::slotShortcutCloseTab(int idx) {
     } else {
       close();
     }
+  }
+}
+
+inline void MainWindow::slotShortcutReload() {
+  if (QWebEngineView *view = currentWebView()) {
+    qDebug() << "Reloading...";
+    view->reload();
+  }
+}
+
+inline void MainWindow::slotShortcutExitFullscreen() {
+  if (QWebEngineView *view = currentWebView()) {
+    qDebug() << "Exiting fullscreen...";
+    view->page()->triggerAction(QWebEnginePage::ExitFullScreen);
   }
 }
 
@@ -300,6 +314,10 @@ MainWindow::MainWindow() : QMainWindow() {
     urlBar->setFocus();
     urlBar->selectAll();
   });
+  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_R),
+              [this]() { slotShortcutReload(); });
+  addShortcut(QKeySequence(Qt::Key_Escape),
+              [this]() { slotShortcutExitFullscreen(); });
 
   if (adblock) {
     adblockMgr = new AdBlockManager(adblockCfg, this);

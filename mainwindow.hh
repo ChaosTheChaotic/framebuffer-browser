@@ -47,6 +47,8 @@ public slots:
   void slotShortcutBack();
   void slotShortcutForward();
   void slotShortcutCloseTab(int idx = -1);
+  void slotShortcutReload();
+  void slotShortcutExitFullscreen();
   void addNewTab(const QString &url = QString());
 
 private:
