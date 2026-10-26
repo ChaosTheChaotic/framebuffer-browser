@@ -21,14 +21,12 @@ assert lib.assertOneOf "defaultBackend" defaultBackend [
 stdenv.mkDerivation {
   pname = "framebuffer-browser";
   version = "0-unstable";
-
   src = if fbbSrc != null then fbbSrc else ../.;
 
   nativeBuildInputs = [
     cmake
     qt6.wrapQtAppsHook
   ];
-
   buildInputs =
     with qt6;
     [
@@ -41,14 +39,16 @@ stdenv.mkDerivation {
   postBuild = ''
     $CC -O3 -Wall -o fbbrowser-vt-reset ${./vtreset.c}
     $CC -O3 -Wall -shared -fPIC -o libfbbrowser-pointer.so ${./pointerspeed.c}
+    $CC -O3 -Wall -pthread -shared -fPIC -o libfbbrowser-scroll.so ${./scrolling.c}
   '';
 
   installPhase = ''
     runHook preInstall
 
-    install -Dm755 fbbrowser $out/libexec/fbbrowser/fbbrowser
+    install -Dm755 fbbrowser          $out/libexec/fbbrowser/fbbrowser
     install -Dm755 fbbrowser-vt-reset $out/bin/fbbrowser-vt-reset
     install -Dm755 libfbbrowser-pointer.so $out/lib/fbbrowser/libfbbrowser-pointer.so
+    install -Dm755 libfbbrowser-scroll.so  $out/lib/fbbrowser/libfbbrowser-scroll.so
 
     install -Dm755 ${./launcher.sh} $out/bin/fbbrowser
     substituteInPlace $out/bin/fbbrowser \
@@ -58,20 +58,18 @@ stdenv.mkDerivation {
           util-linux
         ]
       } \
-      --subst-var-by unwrapped $out/libexec/fbbrowser/fbbrowser \
-      --subst-var-by vtReset $out/bin/fbbrowser-vt-reset \
-      --subst-var-by pointerShim $out/lib/fbbrowser/libfbbrowser-pointer.so \
+      --subst-var-by unwrapped     $out/libexec/fbbrowser/fbbrowser \
+      --subst-var-by vtReset       $out/bin/fbbrowser-vt-reset \
+      --subst-var-by pointerShim   $out/lib/fbbrowser/libfbbrowser-pointer.so \
+      --subst-var-by scrollShim    $out/lib/fbbrowser/libfbbrowser-scroll.so \
       --subst-var-by defaultBackend ${defaultBackend} \
       --subst-var-by pointerSpeedDefault "${if pointerSpeed != null then toString pointerSpeed else ""}"
 
     runHook postInstall
   '';
 
-  # The launcher is a shell script; only the real Qt binary gets wrapped.
   dontWrapQtApps = true;
-  postFixup = ''
-    wrapQtApp $out/libexec/fbbrowser/fbbrowser
-  '';
+  postFixup = "wrapQtApp $out/libexec/fbbrowser/fbbrowser ";
 
   meta = {
     description = "Minimal QtWebEngine (Qt6) web browser for the Linux framebuffer / KMS, no X11 or Wayland needed";
