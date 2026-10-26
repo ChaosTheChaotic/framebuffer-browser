@@ -2,32 +2,31 @@
 #define BROWSERWINDOW_H
 
 #include "adblock.hh"
+#include <QByteArray>
 #include <QCloseEvent>
+#include <QHash>
 #include <QLineEdit>
 #include <QMainWindow>
-#include <QMenu>
 #include <QSettings>
 #include <QShortcut>
 #include <QStackedWidget>
 #include <QTabBar>
-#include <QTabWidget>
 #include <QWebEngineFullScreenRequest>
 #include <QWebEnginePage>
 #include <QWebEngineView>
 #include <QWidget>
-#include <qwebengineview.h>
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
 
-  // Define signals and slots
+  // Configuration
   QString optStartupUrl;
   int optWidth = 0;
   int optHeight = 0;
   QString optProxyHost = "";
   int optProxyPort = 0;
-  bool adblock = true;      // master switch ("adblock" in config.json)
-  AdBlockConfig adblockCfg; // download toggle, lists, local dirs, cache dir
+  bool adblock = true;
+  AdBlockConfig adblockCfg;
 
 public:
   QTabBar *tabBar;
@@ -40,6 +39,9 @@ public:
   void loadUrl(QString url);
   QWebEngineView *currentWebView() const;
 
+  bool setShortcut(const QByteArray &name, const QKeySequence &seq);
+  QKeySequence shortcutFor(const QByteArray &name) const;
+
 public slots:
   void loadStartupUrl();
   void onLoadStarted();
@@ -47,13 +49,25 @@ public slots:
   void slotShortcutBack();
   void slotShortcutForward();
   void slotShortcutCloseTab(int idx = -1);
+  void slotShortcutCloseCurrentTab(); // no-arg wrapper for table
+  void slotShortcutNewTab();
+  void slotShortcutFocusUrl();
   void slotShortcutReload();
   void slotShortcutExitFullscreen();
   void addNewTab(const QString &url = QString());
 
 private:
-  QHash<QKeySequence, QShortcut *> shortcuts;
-  void addShortcut(const QKeySequence &keySeq, std::function<void()> handler);
+  struct ShortcutBinding {
+    QKeySequence seq;
+    void (MainWindow::*slot)() = nullptr;
+    QShortcut *shortcut = nullptr;
+  };
+
+  QHash<QByteArray, ShortcutBinding>
+      bindings;                              // name -> {seq, slot, QShortcut*}
+  QHash<QKeySequence, QByteArray> seqToName; // seq  -> name (conflict map)
+
+  void installShortcuts();
   void fullScreenRequested(QWebEngineFullScreenRequest request);
   void writeSettings();
   QSettings *appSettings;

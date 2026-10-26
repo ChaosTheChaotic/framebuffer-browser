@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeySequence>
 #include <QNetworkProxy>
 #include <QProcess>
 #include <QTimer>
@@ -15,7 +16,7 @@
 #include <QWebEngineFullScreenRequest>
 #include <QWebEngineProfile>
 #include <QWebEngineSettings>
-#include <qkeysequence.h>
+#include <optional>
 #include <utility>
 
 namespace {
@@ -53,7 +54,8 @@ inline void readOpt(const QJsonObject &o, const char *key, T &out) {
 
 template <typename Filter>
 inline void readStringArray(const QJsonObject &o, const char *key,
-                            QStringList &out, const Filter &filter, const char *what) {
+                            QStringList &out, const Filter &filter,
+                            const char *what) {
   const auto it = o.constFind(QLatin1String(key));
   if (it == o.constEnd())
     return;
@@ -74,31 +76,51 @@ inline void readStringArray(const QJsonObject &o, const char *key,
 namespace {
 // How long first nav may be held whilst filter lists loaded
 constexpr int kAdblockStartupGraceMs = 5000;
+
+struct ShortcutDef {
+  const char *name;
+  QKeySequence seq;
+  void (MainWindow::*slot)();
+};
+
+const ShortcutDef kShortcutTable[] = {
+    {"quit", QKeySequence(Qt::CTRL | Qt::Key_Q),
+     &MainWindow::slotShortcutCtrlQ},
+    {"back", QKeySequence(Qt::CTRL | Qt::Key_Left),
+     &MainWindow::slotShortcutBack},
+    {"forward", QKeySequence(Qt::CTRL | Qt::Key_Right),
+     &MainWindow::slotShortcutForward},
+    {"newTab", QKeySequence(Qt::CTRL | Qt::Key_T),
+     &MainWindow::slotShortcutNewTab},
+    {"closeTab", QKeySequence(Qt::CTRL | Qt::Key_W),
+     &MainWindow::slotShortcutCloseCurrentTab},
+    {"focusUrl", QKeySequence(Qt::CTRL | Qt::Key_L),
+     &MainWindow::slotShortcutFocusUrl},
+    {"reload", QKeySequence(Qt::CTRL | Qt::Key_R),
+     &MainWindow::slotShortcutReload},
+    {"exitFull", QKeySequence(Qt::Key_Escape),
+     &MainWindow::slotShortcutExitFullscreen},
+};
+
 } // namespace
 
 void MainWindow::closeEvent(QCloseEvent *) {
-  // This will be called whenever this window is closed.
   // writeSettings();
   qDebug() << "closing2";
 }
 
 void MainWindow::configureWebView(QWebEngineView *view) {
-  // Enable basic JavaScript support
   view->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
   view->settings()->setAttribute(QWebEngineSettings::PluginsEnabled, true);
   view->settings()->setAttribute(QWebEngineSettings::LocalStorageEnabled, true);
-  // Don't allow JavaScript to open/close windows
   view->settings()->setAttribute(QWebEngineSettings::JavascriptCanOpenWindows,
                                  false);
-  // Allow JavaScript to access clipboard
   view->settings()->setAttribute(
       QWebEngineSettings::JavascriptCanAccessClipboard, true);
-  // Allow universal access from file URLs
   view->settings()->setAttribute(
       QWebEngineSettings::LocalContentCanAccessFileUrls, true);
   view->settings()->setAttribute(
       QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
-  // Enable full screen request
   view->settings()->setAttribute(QWebEngineSettings::FullScreenSupportEnabled,
                                  true);
 }
@@ -126,25 +148,65 @@ void MainWindow::fullScreenRequested(QWebEngineFullScreenRequest request) {
   request.accept();
 }
 
-void MainWindow::addShortcut(const QKeySequence &keySeq,
-                             std::function<void()> handler) {
-  if (shortcuts.contains(keySeq)) {
-    delete shortcuts[keySeq];
+void MainWindow::installShortcuts() {
+  for (const auto &def : kShortcutTable) {
+    const QByteArray name(def.name);
+    ShortcutBinding &b = bindings[name];
+    b.seq = def.seq;
+    b.slot = def.slot;
+    b.shortcut = new QShortcut(b.seq, this);
+    connect(b.shortcut, &QShortcut::activated, this, b.slot);
+    seqToName.insert(b.seq, name);
   }
-  QShortcut *shortcut = new QShortcut(keySeq, this);
-  connect(shortcut, &QShortcut::activated, this, [handler]() { handler(); });
-
-  shortcuts[keySeq] = shortcut;
 }
 
-// Slot handler for Ctrl + Q
+// Rebind a named action at runtime
+bool MainWindow::setShortcut(const QByteArray &name, const QKeySequence &seq) {
+  auto it = bindings.find(name);
+  if (it == bindings.end())
+    return false;
+
+  // Drop this action's previous binding.
+  if (it->shortcut) {
+    it->shortcut->deleteLater();
+    it->shortcut = nullptr;
+  }
+  if (!it->seq.isEmpty())
+    seqToName.remove(it->seq);
+
+  // Take ownership of seq
+  if (auto owner = seqToName.constFind(seq); owner != seqToName.constEnd()) {
+    auto obIt = bindings.find(*owner);
+    if (obIt != bindings.end()) {
+      if (obIt->shortcut) {
+        obIt->shortcut->deleteLater();
+        obIt->shortcut = nullptr;
+      }
+      obIt->seq = QKeySequence();
+    }
+    seqToName.remove(seq);
+  }
+
+  it->seq = seq;
+  if (!seq.isEmpty()) {
+    it->shortcut = new QShortcut(seq, this);
+    connect(it->shortcut, &QShortcut::activated, this, it->slot);
+    seqToName.insert(seq, name);
+  }
+  return true;
+}
+
+QKeySequence MainWindow::shortcutFor(const QByteArray &name) const {
+  auto it = bindings.constFind(name);
+  return it == bindings.constEnd() ? QKeySequence() : it->seq;
+}
+
 inline void MainWindow::slotShortcutCtrlQ() {
   qDebug() << "closing1";
   // writeSettings();
   QApplication::exit();
 }
 
-// Slot handler for Ctrl + Left
 inline void MainWindow::slotShortcutBack() {
   if (QWebEngineView *view = currentWebView()) {
     qDebug() << "Going back..";
@@ -152,7 +214,6 @@ inline void MainWindow::slotShortcutBack() {
   }
 }
 
-// Slot handler for Ctrl + Right
 inline void MainWindow::slotShortcutForward() {
   if (QWebEngineView *view = currentWebView()) {
     qDebug() << "Going forward..";
@@ -160,11 +221,9 @@ inline void MainWindow::slotShortcutForward() {
   }
 }
 
-// Slot handler for Ctrl + W
 inline void MainWindow::slotShortcutCloseTab(int idx) {
-  if (idx < 0) {
+  if (idx < 0)
     idx = tabBar->currentIndex();
-  }
   if (idx >= 0 && idx < stackedWidget->count()) {
     if (stackedWidget->count() > 1) {
       QWidget *widget = stackedWidget->widget(idx);
@@ -174,6 +233,15 @@ inline void MainWindow::slotShortcutCloseTab(int idx) {
       close();
     }
   }
+}
+
+void MainWindow::slotShortcutCloseCurrentTab() { slotShortcutCloseTab(-1); }
+
+void MainWindow::slotShortcutNewTab() { addNewTab(optStartupUrl); }
+
+void MainWindow::slotShortcutFocusUrl() {
+  urlBar->setFocus();
+  urlBar->selectAll();
 }
 
 inline void MainWindow::slotShortcutReload() {
@@ -241,7 +309,6 @@ MainWindow::MainWindow() : QMainWindow() {
 
   appSettings = new QSettings(this);
 
-  // Load proxy settings
   if (optProxyHost != "") {
     qDebug() << "Setting proxy to" << optProxyHost << ":" << optProxyPort;
     QNetworkProxy proxy;
@@ -251,7 +318,6 @@ MainWindow::MainWindow() : QMainWindow() {
     QNetworkProxy::setApplicationProxy(proxy);
   }
 
-  // Set window size
   if (optWidth) {
     resize(optWidth, optHeight);
   }
@@ -269,7 +335,6 @@ MainWindow::MainWindow() : QMainWindow() {
     if (!text.isEmpty()) {
       loadUrl(text);
     }
-    // Return focus back to the active web view
     if (QWebEngineView *view = currentWebView()) {
       view->setFocus();
     }
@@ -277,11 +342,9 @@ MainWindow::MainWindow() : QMainWindow() {
 
   stackedWidget = new QStackedWidget(this);
 
-  // Create a tab
   tabBar = new QTabBar(this);
   tabBar->setTabsClosable(true);
 
-  // Add the web view to our window
   layout->addWidget(tabBar);
   layout->addWidget(urlBar);
   layout->addWidget(stackedWidget);
@@ -295,36 +358,15 @@ MainWindow::MainWindow() : QMainWindow() {
     }
   });
 
-  // connect handler for fullscreen press on video
   connect(tabBar, &QTabBar::tabCloseRequested, this,
           &MainWindow::slotShortcutCloseTab);
 
-  // Default shortcuts
-  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q),
-              [this]() { slotShortcutCtrlQ(); });
-  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_Left),
-              [this]() { slotShortcutBack(); });
-  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_Right),
-              [this]() { slotShortcutForward(); });
-  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_T),
-              [this]() { addNewTab(optStartupUrl); });
-  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_W),
-              [this]() { slotShortcutCloseTab(); });
-  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_L), [this]() {
-    urlBar->setFocus();
-    urlBar->selectAll();
-  });
-  addShortcut(QKeySequence(Qt::CTRL | Qt::Key_R),
-              [this]() { slotShortcutReload(); });
-  addShortcut(QKeySequence(Qt::Key_Escape),
-              [this]() { slotShortcutExitFullscreen(); });
+  installShortcuts();
 
   if (adblock) {
     adblockMgr = new AdBlockManager(adblockCfg, this);
     QWebEngineProfile::defaultProfile()->setUrlRequestInterceptor(
         adblockMgr->interceptor());
-    // Hold the first nav until cached lists are in so first page is filtered,
-    // but never longer than grace Whichever fires first wins
     connect(adblockMgr, &AdBlockManager::settled, this,
             &MainWindow::loadStartupUrl);
     QTimer::singleShot(kAdblockStartupGraceMs, this,
@@ -336,8 +378,6 @@ MainWindow::MainWindow() : QMainWindow() {
 }
 
 MainWindow::~MainWindow() {
-  // Detach so Qt cant call interceptor then let manager go
-  // This might wait as it needs a list build that is still running
   QWebEngineProfile::defaultProfile()->setUrlRequestInterceptor(nullptr);
   delete adblockMgr;
   adblockMgr = nullptr;
@@ -368,7 +408,6 @@ void MainWindow::loadStartupUrl() {
 }
 
 void MainWindow::loadConfig() {
-  // Defaults first, so a missing or broken config.json still works.
   adblockCfg.download = true;
   adblockCfg.lists = AdBlockConfig::defaultLists();
   adblockCfg.cacheDir = AdBlockConfig::defaultCacheDir();
