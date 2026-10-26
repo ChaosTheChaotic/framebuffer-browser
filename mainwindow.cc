@@ -16,6 +16,60 @@
 #include <QWebEngineProfile>
 #include <QWebEngineSettings>
 #include <qkeysequence.h>
+#include <utility>
+
+namespace {
+template <typename T> struct JConv;
+
+template <> struct JConv<int> {
+  static bool ok(const QJsonValue &v) { return v.isDouble(); }
+  static int get(const QJsonValue &v) { return v.toInt(); }
+  static constexpr const char *what = "an int";
+};
+template <> struct JConv<bool> {
+  static bool ok(const QJsonValue &v) { return v.isBool(); }
+  static bool get(const QJsonValue &v) { return v.toBool(); }
+  static constexpr const char *what = "a bool";
+};
+template <> struct JConv<QString> {
+  static bool ok(const QJsonValue &v) { return v.isString(); }
+  static QString get(const QJsonValue &v) { return v.toString(); }
+  static constexpr const char *what = "a string";
+};
+
+// Assign if key exists and has right type, otherwise print
+template <typename T>
+inline void readOpt(const QJsonObject &o, const char *key, T &out) {
+  const auto it = o.constFind(QLatin1String(key));
+  if (it == o.constEnd())
+    return;
+  using C = JConv<T>;
+  if (!C::ok(*it)) {
+    qDebug() << "Expected" << key << "to be" << C::what << ". Ignoring";
+    return;
+  }
+  out = C::get(*it);
+}
+
+template <typename Filter>
+inline void readStringArray(const QJsonObject &o, const char *key,
+                            QStringList &out, Filter filter, const char *what) {
+  const auto it = o.constFind(QLatin1String(key));
+  if (it == o.constEnd())
+    return;
+  if (!it->isArray()) {
+    qDebug() << key << "should be an array of" << what << ". Ignoring";
+    return;
+  }
+  QStringList result;
+  for (const QJsonValue &v : it->toArray())
+    if (v.isString())
+      if (auto s = filter(v.toString()))
+        result << std::move(*s);
+  out = std::move(result);
+}
+
+} // namespace
 
 namespace {
 // How long first nav may be held whilst filter lists loaded
@@ -24,7 +78,7 @@ constexpr int kAdblockStartupGraceMs = 5000;
 
 void MainWindow::closeEvent(QCloseEvent *) {
   // This will be called whenever this window is closed.
-  writeSettings();
+  // writeSettings();
   qDebug() << "closing2";
 }
 
@@ -49,14 +103,14 @@ void MainWindow::configureWebView(QWebEngineView *view) {
                                  true);
 }
 
-void MainWindow::writeSettings() {
-  QWebEngineView *view = currentWebView();
-  if (!view)
-    return;
-  QString site = view->url().toString();
-  appSettings->setValue("site", site);
-  qDebug() << " write settings:" << site;
-}
+// void MainWindow::writeSettings() {
+//   QWebEngineView *view = currentWebView();
+//   if (!view)
+//     return;
+//   QString site = view->url().toString();
+//   appSettings->setValue("site", site);
+//   qDebug() << " write settings:" << site;
+// }
 
 void MainWindow::fullScreenRequested(QWebEngineFullScreenRequest request) {
   if (request.toggleOn()) {
@@ -296,161 +350,89 @@ void MainWindow::loadStartupUrl() {
 }
 
 void MainWindow::loadConfig() {
-  // Ad blocking defaults. These must be set before the early returns below so
-  // a missing or broken config.json still gets a working, default setup.
+  // Defaults first, so a missing or broken config.json still works.
   adblockCfg.download = true;
   adblockCfg.lists = AdBlockConfig::defaultLists();
   adblockCfg.cacheDir = AdBlockConfig::defaultCacheDir();
   adblockCfg.resourcesUrl = AdBlockConfig::defaultResourcesUrl();
   adblockCfg.scriptletHosts = AdBlockConfig::defaultScriptletHosts();
 
-  bool haveUrlInCmdLine = false;
-  // Check for url in argv
-  if (qApp->arguments().size() > 1) {
+  const bool haveUrlInCmdLine = qApp->arguments().size() > 1;
+  if (haveUrlInCmdLine)
     optStartupUrl = qApp->arguments()[1];
-    haveUrlInCmdLine = true;
-  }
-  // Load config.json
+
   QFile configFile("config.json");
   if (!configFile.open(QIODevice::ReadOnly)) {
     qDebug() << "Could not open config.json";
     return;
   }
-  QByteArray configData = configFile.readAll();
-  configFile.close();
   QJsonParseError parseErr;
-  QJsonDocument configJson = QJsonDocument::fromJson(configData, &parseErr);
+  const QJsonObject o =
+      QJsonDocument::fromJson(configFile.readAll(), &parseErr).object();
   if (parseErr.error != QJsonParseError::NoError) {
     qDebug() << "JSON parse error" << parseErr.errorString();
     return;
   }
-  QJsonObject configObject = configJson.object();
-  // Load url
-  if (configObject.contains("url") && (!haveUrlInCmdLine)) {
-    if (!configObject["url"].isString()) {
-      qDebug() << "Expected url to be a string, ignoring";
-    } else {
-      optStartupUrl = configObject["url"].toString();
-    }
-  }
 
-  // Load window size
-  if (configObject.contains("width")) {
-    if (!configObject["width"].isDouble()) {
-      qDebug() << "Expected width to be an int. Ignoring";
-    } else {
-      optWidth = configObject["width"].toInt();
-    }
-  }
-  if (configObject.contains("height")) {
-    if (!configObject["height"].isDouble()) {
-      qDebug() << "Expected height to be an int. Ignoring";
-    } else {
-      optHeight = configObject["height"].toInt();
-    }
-  }
-  // Load proxy settings
-  if (configObject.contains("proxyHost")) {
-    if (!configObject["proxyHost"].isString()) {
-      qDebug() << "Expected proxyHost to be a string. Ignoring";
-    } else {
-      optProxyHost = configObject["proxyHost"].toString();
-    }
-  }
-  if (configObject.contains("proxyPort")) {
-    if (!configObject["proxyPort"].isDouble()) {
-      qDebug() << "Expected proxyPort to be an int. Ignoring";
-    } else {
-      optProxyPort = configObject["proxyPort"].toInt();
-    }
-  }
+  if (!haveUrlInCmdLine)
+    readOpt(o, "url", optStartupUrl);
+  readOpt(o, "width", optWidth);
+  readOpt(o, "height", optHeight);
+  readOpt(o, "proxyHost", optProxyHost);
+  readOpt(o, "proxyPort", optProxyPort);
+  readOpt(o, "adblock", adblock);
+  readOpt(o, "adblockDownload", adblockCfg.download);
 
-  if (configObject.contains("adblock")) {
-    if (!configObject["adblock"].isBool()) {
-      qDebug() << "Expected adblock to be a bool. Ignoring";
-    } else {
-      adblock = configObject["adblock"].toBool();
-    }
-  }
-  if (configObject.contains("adblockDownload")) {
-    if (!configObject["adblockDownload"].isBool()) {
-      qDebug() << "Expected adblockDownload to be a bool. Ignoring";
-    } else {
-      adblockCfg.download = configObject["adblockDownload"].toBool();
-    }
-  }
-  if (configObject.contains("adblockTtlHours")) {
-    if (!configObject["adblockTtlHours"].isDouble()) {
+  if (auto it = o.constFind(QLatin1String("adblockTtlHours"));
+      it != o.constEnd()) {
+    if (it->isDouble())
+      adblockCfg.ttlHours = qMax(1, it->toInt());
+    else
       qDebug() << "Expected adblockTtlHours to be an int. Ignoring";
-    } else {
-      adblockCfg.ttlHours = qMax(1, configObject["adblockTtlHours"].toInt());
-    }
   }
-  if (configObject.contains("adblockResources")) {
-    if (!configObject["adblockResources"].isString()) {
+
+  if (auto it = o.constFind(QLatin1String("adblockResources"));
+      it != o.constEnd()) {
+    if (!it->isString()) {
       qDebug() << "Expected adblockResources to be a string. Ignoring";
     } else {
-      const QString u = configObject["adblockResources"].toString();
-      if (u.isEmpty() || u.startsWith("https://") || u.startsWith("http://")) {
+      const QString u = it->toString();
+      if (u.isEmpty() || u.startsWith("https://") || u.startsWith("http://"))
         adblockCfg.resourcesUrl = u;
-      } else {
+      else
         qDebug() << "Ignoring adblockResources that is not an http(s) URL:"
                  << u;
-      }
     }
   }
-  if (configObject.contains("adblockScriptletHosts")) {
-    if (!configObject["adblockScriptletHosts"].isArray()) {
-      qDebug()
-          << "adblockScriptletHosts should be an array of hostnames. Ignoring";
-    } else {
-      QStringList hosts;
-      for (const QJsonValue &v :
-           configObject["adblockScriptletHosts"].toArray()) {
-        const QString h = v.toString().trimmed().toLower();
-        if (!h.isEmpty()) {
-          hosts << h; // validated again where the script is built
-        }
-      }
-      adblockCfg.scriptletHosts = hosts;
-    }
-  }
-  if (configObject.contains("adblockLists")) {
-    if (!configObject["adblockLists"].isArray()) {
-      qDebug() << "adblockLists should be an array of URLs. Ignoring";
-    } else {
-      QStringList urls;
-      for (const QJsonValue &v : configObject["adblockLists"].toArray()) {
-        const QString u = v.toString();
-        if (u.startsWith("https://") || u.startsWith("http://")) {
-          urls << u;
-        } else {
-          qDebug() << "Ignoring adblock list that is not an http(s) URL:" << u;
-        }
-      }
-      adblockCfg.lists = urls; // may be empty: local folders only
-    }
-  }
-  if (configObject.contains("adblockDirs")) {
-    if (!configObject["adblockDirs"].isArray()) {
-      qDebug() << "adblockDirs should be an array of paths. Ignoring";
-    } else {
-      for (const QJsonValue &v : configObject["adblockDirs"].toArray()) {
-        if (!v.isString()) {
-          qDebug() << "Ignoring non-string adblock directory";
-          continue;
-        }
-        QString p = v.toString();
-        if (p == "~" || p.startsWith("~/")) {
+
+  readStringArray(
+      o, "adblockScriptletHosts", adblockCfg.scriptletHosts,
+      [](QString s) -> std::optional<QString> {
+        s = s.trimmed().toLower();
+        return s.isEmpty() ? std::nullopt
+                           : std::optional<QString>(std::move(s));
+      },
+      "hostnames");
+
+  readStringArray(
+      o, "adblockLists", adblockCfg.lists,
+      [](const QString &s) -> std::optional<QString> {
+        if (s.startsWith("https://") || s.startsWith("http://"))
+          return s;
+        qDebug() << "Ignoring adblock list that is not an http(s) URL:" << s;
+        return std::nullopt;
+      },
+      "http(s) URLs");
+
+  readStringArray(
+      o, "adblockDirs", adblockCfg.localDirs,
+      [](QString p) -> std::optional<QString> {
+        if (p == "~" || p.startsWith("~/"))
           p = QDir::homePath() + p.mid(1);
-        }
-        // Absolute now, while the working directory is still the config dir.
         p = QDir(p).absolutePath();
-        if (!QDir(p).exists()) {
+        if (!QDir(p).exists())
           qWarning() << "adblock directory does not exist (yet):" << p;
-        }
-        adblockCfg.localDirs << p; // kept even if missing; skipped at load
-      }
-    }
-  }
+        return p;
+      },
+      "paths");
 }
