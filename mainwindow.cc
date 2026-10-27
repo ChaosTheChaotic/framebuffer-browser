@@ -73,7 +73,7 @@ void readStringArray(const QJsonObject &o, const char *key, QStringList &out,
 
 namespace {
 // How long first nav may be held whilst filter lists loaded
-constexpr int kAdblockStartupGraceMs = 5000;
+constexpr int kAdblockStartupGraceMs = 500;
 struct ShortcutDef {
   const char *name;
   QKeySequence seq;

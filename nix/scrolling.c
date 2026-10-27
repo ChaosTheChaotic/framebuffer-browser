@@ -197,8 +197,7 @@ static int claim_name(const char *name, int fd) {
     if (strcmp(g_claims[i].name, name) == 0)
       return g_claims[i].fd == fd;
   if (g_claim_count < MAX_CLAIMS) {
-    strncpy(g_claims[g_claim_count].name, name, NAME_LEN - 1);
-    g_claims[g_claim_count].name[NAME_LEN - 1] = 0;
+    snprintf(g_claims[g_claim_count].name, NAME_LEN, "%s", name);
     g_claims[g_claim_count].fd = fd;
     g_claim_count++;
   }
