@@ -300,7 +300,8 @@ case "$resolved" in
 		# Qt has no env var for the DRM node; it only reads "device" from this JSON.
 		# "hwcursor": false makes Qt draw a software cursor instead.
 		if [ -z "${QT_QPA_EGLFS_KMS_CONFIG:-}" ]; then
-			export QT_QPA_EGLFS_KMS_CONFIG="$config_dir/kms.json"
+			# config_dir may be read only (due to NixOS module), so prefer the runtime dir
+			export QT_QPA_EGLFS_KMS_CONFIG="${XDG_RUNTIME_DIR:-$config_dir}/fbbrowser-kms.json"
 			write_kms_json=1
 		fi
 		;;

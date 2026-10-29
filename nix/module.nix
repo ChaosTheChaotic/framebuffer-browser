@@ -18,6 +18,24 @@ let
     ;
 
   cfg = config.programs.framebuffer-browser;
+  json = pkgs.formats.json { };
+  # The launcher reads config.json from FBBROWSER_CONFIG_DIR
+  configDir = pkgs.linkFarm "fbbrowser-config" [
+    {
+      name = "config.json";
+      path = json.generate "config.json" cfg.settings;
+    }
+  ];
+
+  # Booleans become 1/0, which is what the launcher and shims test for
+  envValue =
+    v:
+    if v == true then
+      "1"
+    else if v == false then
+      "0"
+    else
+      toString v;
 in
 {
   options.programs.framebuffer-browser = {
@@ -71,6 +89,58 @@ in
       '';
     };
 
+    settings = mkOption {
+      type = json.type;
+      default = { };
+      example = literalExpression ''
+        {
+          url = "https://duckduckgo.com";
+          searchUrl = "https://www.google.com/search?q=%s";
+          width = 1920;
+          height = 1080;
+          adblockTtlHours = 48;
+          adblockDirs = [ "~/adblock" ];
+        }
+      '';
+      description = ''
+        Contents of the browser's `config.json`, written as is, so any key
+        read by `MainWindow::loadConfig` works without changes to this module.
+        Unknown keys are ignored by the browser. When non-empty,
+        `FBBROWSER_CONFIG_DIR` points at a read-only directory holding this
+        file, so `~/.config/fbbrowser/config.json` is no longer used. When
+        empty, the launcher manages that file itself as before.
+      '';
+    };
+
+    env = mkOption {
+      type = types.attrsOf (
+        types.nullOr (
+          types.oneOf [
+            types.str
+            types.int
+            types.float
+            types.bool
+            types.path
+          ]
+        )
+      );
+      default = { };
+      example = literalExpression ''
+        {
+          FBBROWSER_SCROLL_MODE = "synth";
+          FBBROWSER_SCROLL_NATURAL = false;
+          FBBROWSER_DRM_DEVICE = "/dev/dri/card1";
+          QTWEBENGINE_CHROMIUM_FLAGS = "--ignore-gpu-blocklist";
+        }
+      '';
+      description = ''
+        Extra session environment variables, for anything the launcher or the
+        shims read (`FBBROWSER_*`, `QT_QPA_*`, `QTWEBENGINE_*`). Booleans
+        become `1`/`0` and `null` drops the variable. These win over the
+        dedicated options above, e.g. `FBBROWSER_BACKEND`.
+      '';
+    };
+
     users = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -117,7 +187,9 @@ in
       // lib.optionalAttrs cfg.hardwareCursor { FBBROWSER_HWCURSOR = "1"; }
       // lib.optionalAttrs (cfg.pointerSpeed != null) {
         FBBROWSER_POINTER_SPEED = toString cfg.pointerSpeed;
-      };
+      }
+      // lib.optionalAttrs (cfg.settings != { }) { FBBROWSER_CONFIG_DIR = "${configDir}"; }
+      // lib.mapAttrs (_: envValue) (lib.filterAttrs (_: v: v != null) cfg.env);
 
       # eglfs needs EGL/GBM and the GPU driver from /run/opengl-driver.
       hardware.graphics.enable = mkDefault true;
