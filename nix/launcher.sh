@@ -7,9 +7,12 @@ real_bin='@unwrapped@'
 vt_reset='@vtReset@'
 pointer_shim='@pointerShim@'
 scroll_shim='@scrollShim@'
+unpack_crx='@unpackCrx@'
 backend="${FBBROWSER_BACKEND:-@defaultBackend@}"
 dry_run=0
 debug=0
+action=run
+action_arg=""
 
 die() {
 	printf 'fbbrowser: error: %s\n' "$*" >&2
@@ -34,9 +37,28 @@ Options:
   -n, --dry-run   Print the chosen backend and environment, don't start
   -h, --help      Show this help
 
+Extensions (Manifest V3 only; these commands do not start the browser):
+  --install-extension <src>
+                  <src> is a Chrome Web Store URL, a bare 32 letter extension
+                  id, a URL or file of a .crx/.zip, or an unpacked directory.
+                  It is unpacked into the extension folder and loaded on every
+                  start. Restart the browser afterwards.
+  --list-extensions
+                  List installed extensions (name and version)
+  --remove-extension <name>
+                  Remove one, using the name that --list-extensions prints
+
 Only one URL is accepted (the browser reads just argv[1]). Chromium flags
 cannot be passed as arguments; use QTWEBENGINE_CHROMIUM_FLAGS instead.
-Quit the browser with Ctrl+Q. Ctrl+Left / Ctrl+Right go back / forward.
+
+Keys: Ctrl+Q quit, Ctrl+Left / Ctrl+Right back / forward, Ctrl+T new tab,
+Ctrl+W close tab, Ctrl+L focus the address bar, Ctrl+R reload, Esc leave
+fullscreen. Closing the last tab quits.
+
+Address bar: a leading ? forces a web search; ./x ../x ~/x and existing /x
+paths open files; host:port, IP addresses, localhost and known TLDs are URLs
+(https, or http for ports, IPs and .local/.lan/.test/.internal names);
+anything else is searched.
 
 General (keys in config.json):
   url              "https://..."  start-up URL; a URL given on the command
@@ -51,9 +73,12 @@ General (keys in config.json):
   tldUpdate        true/false     refresh the public-suffix (IANA TLD) list in
                                   the background; it decides whether a typed
                                   word is treated as a hostname or a search
-  extensionDirs    ["/path"]      folders holding unpacked Chrome extensions;
-                                  each entry may itself be an extension (has
-                                  manifest.json) or contain subfolders that do
+  extensionDirs    ["/path"]      extra folders holding unpacked Chrome
+                                  extensions; each entry may itself be an
+                                  extension (has manifest.json) or contain
+                                  subfolders that do. Relative paths are
+                                  relative to the config directory. Extensions
+                                  from --install-extension are always loaded
 
 Ad blocking (keys in config.json):
   adblock          true/false   master switch (default true)
@@ -64,6 +89,14 @@ Ad blocking (keys in config.json):
                                 start-up and after each list refresh
   adblockLists     ["https://"] replace the built-in uBO/EasyList set
   adblockTtlHours  96           refresh period for lists without "! Expires:"
+  adblockResources "https://"   scriptlet resources.json (default: Brave's);
+                                "" turns scriptlets off
+  adblockScriptletHosts ["host"]
+                                only these hosts get scriptlet and cosmetic
+                                filtering (default: the YouTube hosts, which
+                                also enables the built-in YouTube handling;
+                                [] turns all of that off). Other sites only
+                                get network blocking.
   Lists are cached in \${XDG_CACHE_HOME:-~/.cache}/framebuffer-browser/adblock
 
 Environment:
@@ -81,11 +114,17 @@ Environment:
   FBBROWSER_HWCURSOR         Set to 1 to use the hardware cursor under eglfs. Off by
                              default: some drivers (e.g. Asahi) reject Qt's cursor
                              ioctls, spamming "Failed to move cursor on screen"
-  FBBROWSER_POINTER_SPEED    libinput pointer speed, -1.0 .. 1.0 (0 = libinput default)
+  FBBROWSER_EXTENSIONS_DIR   Where --install-extension puts extensions and the
+                             browser looks for them (default:
+                             \${XDG_DATA_HOME:-~/.local/share}/framebuffer-browser/extensions)
+  FBBROWSER_CHROME_VERSION   Chrome version claimed when downloading from the
+                             Web Store (default 140.0.0.0)
   QT_QPA_EGLFS_KMS_CONFIG    Your own Qt KMS JSON; stops the launcher generating one
                              (then hwcursor is whatever your JSON says)
   QT_QPA_PLATFORM            If set and backend is 'auto', used as-is (no detection)
-  FBBROWSER_POINTER_SPEED    libinput pointer speed, -1.0 .. 1.0 (0 = libinput default)
+  FBBROWSER_POINTER_SPEED    Pointer speed, -1.0 .. 1.0 (0 = unchanged). Scales
+                             evdev motion in an LD_PRELOAD shim; applies to
+                             eglfs and linuxfb only
 
   FBBROWSER_SCROLL_MODE      auto (default) | synth | off
                              auto   – filter 1-finger trackpad scroll and keep
@@ -97,6 +136,13 @@ Environment:
                              synthesising (default 20)
   FBBROWSER_SCROLL_NATURAL   1 (default, Mac-style) or 0 (traditional wheel
                              direction) for the synthesised scroll
+  FBBROWSER_SCROLL_DEBUG     Non-empty: log every scroll decision to stderr
+  FBBROWSER_SCROLL_STRIP     0 = stop filtering events to match the capabilities
+                             the shim reports (troubleshooting)
+  FBBROWSER_SCROLL_CLAIM     0 = turn off the per-device-name de-duplication
+                             (troubleshooting)
+  FBBROWSER_SCROLL_PRIMARY_FD  Only apply the shim to this file descriptor
+                             (troubleshooting, see the debug output)
 
 If a crash leaves a text VT dead (blank, no keyboard), run from another VT
 or over SSH:  sudo fbbrowser-vt-reset /dev/ttyN
@@ -122,6 +168,23 @@ while [ $# -gt 0 ]; do
 			dry_run=1
 			shift
 			;;
+		--install-extension | --remove-extension)
+			[ $# -ge 2 ] || die "$1 needs a value (see --help)"
+			action=${1#--}
+			action=${action%-extension}
+			action_arg=$2
+			shift 2
+			;;
+		--install-extension=* | --remove-extension=*)
+			action=${1#--}
+			action=${action%%-extension=*}
+			action_arg=${1#*=}
+			shift
+			;;
+		--list-extensions)
+			action=list
+			shift
+			;;
 		-h | --help)
 			usage
 			exit 0
@@ -134,6 +197,99 @@ while [ $# -gt 0 ]; do
 		*) break ;;
 	esac
 done
+
+# Extensions live in a writable folder the browser also scans, so they work
+# even when config.json is read only (NixOS module).
+ext_dir() {
+	printf '%s\n' "${FBBROWSER_EXTENSIONS_DIR:-${XDG_DATA_HOME:-${HOME:?HOME is not set}/.local/share}/framebuffer-browser/extensions}"
+}
+
+install_extension() {
+	local src=$1 dir name file="" id="" tmp
+	local store_re='^https://(chromewebstore\.google\.com|chrome\.google\.com/webstore)/.*/([a-p]{32})([/?#]|$)'
+	local dl=(curl -fsSL --retry 2 --connect-timeout 15)
+
+	dir=$(ext_dir)
+	mkdir -p "$dir"
+	tmp=$(mktemp -d "$dir/.tmp.XXXXXX")
+	trap "rm -rf ${tmp@Q}" EXIT # expanded now so $tmp is local and gone when the trap runs
+
+	if [[ $src =~ ^[a-p]{32}$ ]]; then
+		id=$src
+	elif [[ $src =~ $store_re ]]; then
+		id=${BASH_REMATCH[2]}
+	fi
+
+	if [ -n "$id" ]; then
+		name=$id
+		file=$tmp/ext.crx
+		note "downloading $id from the Chrome Web Store"
+		"${dl[@]}" -o "$file" \
+			"https://clients2.google.com/service/update2/crx?response=redirect&prodversion=${FBBROWSER_CHROME_VERSION:-140.0.0.0}&acceptformat=crx2,crx3&x=id%3D${id}%26installsource%3Dondemand%26uc" ||
+			die "download failed (wrong id, or the store refused the request)"
+	elif [[ $src == http://* || $src == https://* ]]; then
+		name=$(basename "${src%%[?#]*}")
+		name=${name%.*}
+		file=$tmp/ext.crx
+		"${dl[@]}" -o "$file" "$src" || die "download failed: $src"
+	elif [ -f "$src" ]; then
+		file=$src
+		name=$(basename "$src")
+		name=${name%.*}
+	elif [ -d "$src" ]; then
+		name=$(basename "$(cd "$src" && pwd)")
+	else
+		die "'$src' is not an extension id, Web Store URL, URL, file or directory"
+	fi
+	name=${name//[^A-Za-z0-9._-]/_}
+	case "$name" in '' | .*) name=extension ;; esac
+
+	if [ -n "$file" ]; then
+		"$unpack_crx" "$file" "$tmp/x" || die "could not unpack $src"
+	else
+		[ -f "$src/manifest.json" ] || die "$src has no manifest.json"
+		cp -R --no-preserve=mode,ownership "$src" "$tmp/x"
+	fi
+	chmod -R u+rwX "$tmp/x"
+	rm -rf "$tmp/x/_metadata" # reserved name, makes Chromium refuse unpacked extensions
+	grep -Eq '"manifest_version"[[:space:]]*:[[:space:]]*3' "$tmp/x/manifest.json" ||
+		die "$src is not a Manifest V3 extension; Qt WebEngine only loads Manifest V3"
+
+	rm -rf "${dir:?}/$name"
+	mv "$tmp/x" "$dir/$name"
+	note "installed '$name' in $dir (restart the browser to load it)"
+}
+
+list_extensions() {
+	local dir d n
+	dir=$(ext_dir)
+	for d in "$dir"/*/; do
+		[ -f "${d}manifest.json" ] || continue
+		n=${d%/}
+		printf '%s\t%s\n' "${n##*/}" \
+			"$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${d}manifest.json" | head -n1)"
+	done
+}
+
+remove_extension() {
+	local dir name=$1
+	dir=$(ext_dir)
+	case "$name" in '' | */* | .*) die "invalid extension name '$name'" ;; esac
+	[ -d "$dir/$name" ] || die "no installed extension '$name' (see --list-extensions)"
+	rm -rf "${dir:?}/$name"
+	note "removed '$name'"
+}
+
+if [ "$action" != run ]; then
+	[ $# -eq 0 ] || die "unexpected argument '$1'"
+	case "$action" in
+		install) install_extension "$action_arg" ;;
+		remove) remove_extension "$action_arg" ;;
+		list) list_extensions ;;
+	esac
+	exit 0
+fi
+
 [ $# -le 1 ] || die "at most one URL is accepted"
 url=${1:-}
 
@@ -305,6 +461,9 @@ fi
 # config.json lives in the working directory, so give it a stable one.
 config_dir="${FBBROWSER_CONFIG_DIR:-${XDG_CONFIG_HOME:-${HOME:?HOME is not set}/.config}/fbbrowser}"
 
+FBBROWSER_EXTENSIONS_DIR=$(ext_dir)
+export FBBROWSER_EXTENSIONS_DIR
+
 hwcursor=false
 if [ "${FBBROWSER_HWCURSOR:-0}" = 1 ]; then hwcursor=true; fi
 
@@ -359,6 +518,7 @@ if [ "$dry_run" = 1 ]; then
 	printf 'backend:    %s\n' "$resolved"
 	printf 'drm node:   %s\n' "${drm_node:-<none>}"
 	printf 'config dir: %s\n' "$config_dir"
+	printf 'extensions: %s\n' "$FBBROWSER_EXTENSIONS_DIR"
 	while IFS= read -r name; do
 		case "$name" in QT_QPA_* | QTWEBENGINE_* | QT_LOGGING_*) printf '%s=%s\n' "$name" "${!name}" ;; esac
 	done < <(compgen -e | sort)
@@ -374,7 +534,6 @@ if [ ! -e "$config_dir/config.json" ]; then
 	cat >"$config_dir/config.json" <<'JSON'
 {
   "url": "https://google.com",
-  "wsServerPort": 0,
   "width": 0,
   "height": 0,
   "proxyHost": "",

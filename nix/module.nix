@@ -19,11 +19,58 @@ let
 
   cfg = config.programs.framebuffer-browser;
   json = pkgs.formats.json { };
+  crx = pkgs.callPackage ./crx.nix { };
+
+  crxSpec = types.submodule {
+    options = {
+      id = mkOption {
+        type = types.strMatching "[a-p]{32}";
+        example = "cjpalhdlnbpafiamejdnhcphjbkeiagm";
+        description = "Extension id: the 32 letter a-p string at the end of its Chrome Web Store URL.";
+      };
+      hash = mkOption {
+        type = types.str;
+        example = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        description = ''
+          Hash of the downloaded .crx. The store always serves the newest version,
+          so this stops matching when the extension updates; the build error shows
+          the new hash.
+        '';
+      };
+      name = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Name used in the store path. Defaults to the id.";
+      };
+      prodversion = mkOption {
+        type = types.str;
+        default = "140.0.0.0";
+        description = "Chromium version the download request claims.";
+      };
+    };
+  };
+
+  isPackedFile = e: !(lib.isDerivation e) && (lib.hasSuffix ".crx" (toString e) || lib.hasSuffix ".zip" (toString e));
+
+  toExtensionDir =
+    e:
+    if lib.isDerivation e then
+      e
+    else if builtins.isAttrs e then
+      crx.fetchCrx {
+        inherit (e) id hash prodversion;
+        name = if e.name == null then e.id else e.name;
+      }
+    else if isPackedFile e then
+      crx.unpackCrx { src = e; }
+    else
+      e;
+
   # The launcher reads config.json from FBBROWSER_CONFIG_DIR
   finalSettings =
     cfg.settings
     // lib.optionalAttrs (cfg.extensions != [ ]) {
-      extensionDirs = (cfg.settings.extensionDirs or [ ]) ++ map (e: "${e}") cfg.extensions;
+      extensionDirs = (cfg.settings.extensionDirs or [ ]) ++ map (e: "${toExtensionDir e}") cfg.extensions;
     };
 
   configDir = pkgs.linkFarm "fbbrowser-config" [
@@ -119,11 +166,24 @@ in
     };
 
     extensions = mkOption {
-      type = types.listOf (types.either types.package types.path);
+      type = types.listOf (
+        types.oneOf [
+          types.package
+          types.path
+          crxSpec
+        ]
+      );
       default = [ ];
       example = literalExpression ''
         [
           ./some-extension
+          ./other-extension.crx
+					./some-other-extension.zip
+          # download from the Chrome Web Store, the id is the last part of its URL
+          {
+            id = "abcdefghijklmnopabcdefghijklmnop";
+            hash = "sha256-...";
+          }
           (pkgs.fetchzip {
             url = "https://example.com/somezip.zip";
             hash = "sha256-...";
@@ -132,10 +192,17 @@ in
         ]
       '';
       description = ''
-        Chrome manifest v3 extensions. Entries may have either a manifest.json or subdirectories with a manifest.json
-        A derivation whose $out looks the same may also be used
-        Extensions are loaded via loadExtension() from readonly store path
-        Nothing is copied into profile
+        Chrome extensions to load at start-up. Only Manifest V3 extensions work
+        and Qt WebEngine must be 6.10 or newer.
+
+        Each entry may be an unpacked directory (with a `manifest.json`, or with
+        subdirectories that have one), a derivation producing such a directory,
+        a `.crx` / `.zip` file, or `{ id; hash; }` to fetch from the Chrome Web
+        Store. Packed files are unpacked at build time. Nothing is copied into
+        the profile: extensions are loaded from the read-only store path.
+
+        Extensions added at run time with `fbbrowser --install-extension` live
+        in `~/.local/share/framebuffer-browser/extensions` and are loaded as well.
       '';
     };
 

@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QKeySequence>
 #include <QNetworkProxy>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWebEngineExtensionInfo>
@@ -318,6 +319,19 @@ int loadExtensions(const QString &path, QWebEngineExtensionManager *extMgr) {
 
 MainWindow::MainWindow() : QMainWindow() {
   loadConfig();
+
+  // Extensions added with fbbrowser --install-extension are here
+  // The launcher passes the folder in FBBROWSER_EXTENSIONS_DIR so both agree
+  {
+    const QString env = qEnvironmentVariable("FBBROWSER_EXTENSIONS_DIR");
+    const QString userExtDir = env.isEmpty()
+                                   ? QStandardPaths::writableLocation(
+                                         QStandardPaths::AppDataLocation) +
+                                         QStringLiteral("/extensions")
+                                   : env;
+    if (!userExtDir.isEmpty() && !optExtensionDirs.contains(userExtDir))
+      optExtensionDirs.prepend(userExtDir);
+  }
 
   QWebEngineExtensionManager *extMgr =
       QWebEngineProfile::defaultProfile()->extensionManager();

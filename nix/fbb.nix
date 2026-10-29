@@ -5,6 +5,8 @@
   qt6,
   coreutils,
   util-linux,
+  curl,
+  unzip,
   fbbAdblock,
   defaultBackend ? "auto",
   pointerSpeed ? null,
@@ -50,16 +52,21 @@ stdenv.mkDerivation {
     install -Dm755 libfbbrowser-pointer.so $out/lib/fbbrowser/libfbbrowser-pointer.so
     install -Dm755 libfbbrowser-scroll.so  $out/lib/fbbrowser/libfbbrowser-scroll.so
 
+    install -Dm755 ${./unpack-crx.sh} $out/libexec/fbbrowser/unpack-crx
+
     install -Dm755 ${./launcher.sh} $out/bin/fbbrowser
     substituteInPlace $out/bin/fbbrowser \
       --subst-var-by path ${
         lib.makeBinPath [
           coreutils
           util-linux
+          curl
+          unzip
         ]
       } \
       --subst-var-by unwrapped     $out/libexec/fbbrowser/fbbrowser \
       --subst-var-by vtReset       $out/bin/fbbrowser-vt-reset \
+      --subst-var-by unpackCrx     $out/libexec/fbbrowser/unpack-crx \
       --subst-var-by pointerShim   $out/lib/fbbrowser/libfbbrowser-pointer.so \
       --subst-var-by scrollShim    $out/lib/fbbrowser/libfbbrowser-scroll.so \
       --subst-var-by defaultBackend ${defaultBackend} \
