@@ -318,12 +318,13 @@ MainWindow::MainWindow() : QMainWindow() {
   layout->addWidget(stackedWidget);
   setCentralWidget(mainContainer);
 
-  connect(tabBar, &QTabBar::currentChanged, this, [this](int) {
-    if (QWebEngineView *view = currentWebView()) {
+  connect(tabBar, &QTabBar::currentChanged, this, [this](int i) {
+    if (i >= 0 && i < stackedWidget->count())
+      stackedWidget->setCurrentIndex(i);
+    if (QWebEngineView *view = currentWebView())
       urlBar->setText(view->url().toString());
-    } else {
+    else
       urlBar->clear();
-    }
   });
 
   connect(tabBar, &QTabBar::tabCloseRequested, this,
