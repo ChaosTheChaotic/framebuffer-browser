@@ -2,6 +2,7 @@
 #define BROWSERWINDOW_H
 
 #include "adblock.hh"
+#include "omnibox.hh"
 #include <QByteArray>
 #include <QCloseEvent>
 #include <QHash>
@@ -36,7 +37,7 @@ public:
   ~MainWindow();
   void configureWebView(QWebEngineView *view);
   void loadConfig();
-  void loadUrl(QString url);
+  void loadUrl(const QUrl &url);
   QWebEngineView *currentWebView() const;
 
   bool setShortcut(const QByteArray &name, const QKeySequence &seq);
@@ -53,7 +54,7 @@ public slots:
   void slotShortcutFocusUrl();
   void slotShortcutReload();
   void slotShortcutExitFullscreen();
-  void addNewTab(const QString &url = QString());
+  void addNewTab(const QUrl &url = QUrl());
 
 private:
   struct ShortcutBinding {
@@ -65,6 +66,10 @@ private:
   QHash<QByteArray, ShortcutBinding>
       bindings;                              // name -> {seq, slot, QShortcut*}
   QHash<QKeySequence, QByteArray> seqToName; // seq  -> name (conflict map)
+
+	QString optSearchUrl; // empty = default
+	bool optTldUpdate = true;
+	Omnibox *omnibox = nullptr;
 
   void installShortcuts();
   void fullScreenRequested(QWebEngineFullScreenRequest request);

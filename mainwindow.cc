@@ -1,5 +1,6 @@
 #include "mainwindow.hh"
 #include "adblock.hh"
+#include "omnibox.hh"
 
 #include <QApplication>
 #include <QDebug>
@@ -221,8 +222,6 @@ void MainWindow::slotShortcutCloseTab(int idx) {
 
 void MainWindow::slotShortcutCloseCurrentTab() { slotShortcutCloseTab(-1); }
 
-void MainWindow::slotShortcutNewTab() { addNewTab(optStartupUrl); }
-
 void MainWindow::slotShortcutFocusUrl() {
   urlBar->setFocus();
   urlBar->selectAll();
@@ -242,7 +241,7 @@ QWebEngineView *MainWindow::currentWebView() const {
   return qobject_cast<QWebEngineView *>(stackedWidget->currentWidget());
 }
 
-void MainWindow::addNewTab(const QString &url) {
+void MainWindow::addNewTab(const QUrl &url) {
   QWebEngineView *webView = new QWebEngineView(stackedWidget);
   configureWebView(webView);
 
@@ -270,12 +269,7 @@ void MainWindow::addNewTab(const QString &url) {
           });
 
   if (!url.isEmpty()) {
-    QString target = url;
-    if (target.startsWith("./")) {
-      target =
-          "file:///" + QDir::currentPath() + QDir::separator() + target.mid(2);
-    }
-    webView->load(QUrl(target));
+    webView->load(url);
   }
 }
 
@@ -293,6 +287,9 @@ MainWindow::MainWindow() : QMainWindow() {
     QNetworkProxy::setApplicationProxy(proxy);
   }
 
+  omnibox = new Omnibox(optSearchUrl, optTldUpdate, this);
+  omnibox->start();
+
   if (optWidth) {
     resize(optWidth, optHeight);
   }
@@ -306,13 +303,9 @@ MainWindow::MainWindow() : QMainWindow() {
   urlBar->setPlaceholderText("Enter URL");
 
   connect(urlBar, &QLineEdit::returnPressed, this, [this]() {
-    QString text = urlBar->text();
-    if (!text.isEmpty()) {
-      loadUrl(text);
-    }
-    if (QWebEngineView *view = currentWebView()) {
+    loadUrl(omnibox->resolve(urlBar->text()));
+    if (QWebEngineView *view = currentWebView())
       view->setFocus();
-    }
   });
 
   stackedWidget = new QStackedWidget(this);
@@ -360,15 +353,13 @@ MainWindow::~MainWindow() {
   QWebEngineProfile::defaultProfile()->setUrlRequestInterceptor(nullptr);
 }
 
-void MainWindow::loadUrl(QString url) {
+void MainWindow::loadUrl(const QUrl &url) {
   if (stackedWidget->count() == 0) {
     addNewTab(url);
   } else {
     QWebEngineView *view = currentWebView();
-    if (url.startsWith("./")) {
-      url = "file:///" + QDir::currentPath() + QDir::separator() + url.mid(2);
-    }
-    view->load(QUrl(url));
+    if (view && !url.isEmpty())
+      view->load(url);
   }
 }
 
@@ -376,7 +367,11 @@ void MainWindow::loadStartupUrl() {
   if (startupLoaded)
     return;
   startupLoaded = true;
-  loadUrl(optStartupUrl);
+  loadUrl(omnibox->resolve(optStartupUrl));
+}
+
+void MainWindow::slotShortcutNewTab() {
+  addNewTab(omnibox->resolve(optStartupUrl));
 }
 
 void MainWindow::loadConfig() {
@@ -411,6 +406,9 @@ void MainWindow::loadConfig() {
   readOpt(o, "proxyPort", optProxyPort);
   readOpt(o, "adblock", adblock);
   readOpt(o, "adblockDownload", adblockCfg.download);
+  readOpt(o, "searchUrl",
+          optSearchUrl); // e.g. "https://www.google.com/search?q=%s"
+  readOpt(o, "tldUpdate", optTldUpdate);
 
   if (auto it = o.constFind(QLatin1String("adblockTtlHours"));
       it != o.constEnd()) {
