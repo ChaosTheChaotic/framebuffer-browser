@@ -350,6 +350,11 @@ MainWindow::MainWindow() : QMainWindow() {
 }
 
 MainWindow::~MainWindow() {
+  while (stackedWidget->count() > 0) {
+    QWidget *w = stackedWidget->widget(0);
+    stackedWidget->removeWidget(w);
+    delete w;
+  }
   QWebEngineProfile::defaultProfile()->setUrlRequestInterceptor(nullptr);
 }
 
