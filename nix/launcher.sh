@@ -38,6 +38,23 @@ Only one URL is accepted (the browser reads just argv[1]). Chromium flags
 cannot be passed as arguments; use QTWEBENGINE_CHROMIUM_FLAGS instead.
 Quit the browser with Ctrl+Q. Ctrl+Left / Ctrl+Right go back / forward.
 
+General (keys in config.json):
+  url              "https://..."  start-up URL; a URL given on the command
+                                  line wins over this
+  width, height    0              window size in pixels; 0 = full screen
+  proxyHost        ""             HTTP proxy hostname; empty = no proxy
+  proxyPort        0              HTTP proxy port
+  searchUrl        "https://duckduckgo.com/?q=%s"
+                                  search URL template; %s is replaced by the
+                                  percent-encoded query. Must be http(s) and
+                                  contain %s
+  tldUpdate        true/false     refresh the public-suffix (IANA TLD) list in
+                                  the background; it decides whether a typed
+                                  word is treated as a hostname or a search
+  extensionDirs    ["/path"]      folders holding unpacked Chrome extensions;
+                                  each entry may itself be an extension (has
+                                  manifest.json) or contain subfolders that do
+
 Ad blocking (keys in config.json):
   adblock          true/false   master switch (default true)
   adblockDownload  true/false   download + auto-refresh filter lists; false uses

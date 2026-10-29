@@ -28,6 +28,7 @@ class MainWindow : public QMainWindow {
   int optProxyPort = 0;
   bool adblock = true;
   AdBlockConfig adblockCfg;
+  QStringList optExtensionDirs;
 
 public:
   QTabBar *tabBar;
@@ -67,9 +68,11 @@ private:
       bindings;                              // name -> {seq, slot, QShortcut*}
   QHash<QKeySequence, QByteArray> seqToName; // seq  -> name (conflict map)
 
-	QString optSearchUrl; // empty = default
-	bool optTldUpdate = true;
-	Omnibox *omnibox = nullptr;
+  QString optSearchUrl; // empty = default
+  bool optTldUpdate = true;
+  Omnibox *omnibox = nullptr;
+
+	unsigned int pendingExts = 0;
 
   void installShortcuts();
   void fullScreenRequested(QWebEngineFullScreenRequest request);

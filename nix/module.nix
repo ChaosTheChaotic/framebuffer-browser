@@ -20,10 +20,16 @@ let
   cfg = config.programs.framebuffer-browser;
   json = pkgs.formats.json { };
   # The launcher reads config.json from FBBROWSER_CONFIG_DIR
+  finalSettings =
+    cfg.settings
+    // lib.optionalAttrs (cfg.extensions != [ ]) {
+      extensionDirs = (cfg.settings.extensionDirs or [ ]) ++ map (e: "${e}") cfg.extensions;
+    };
+
   configDir = pkgs.linkFarm "fbbrowser-config" [
     {
       name = "config.json";
-      path = json.generate "config.json" cfg.settings;
+      path = json.generate "config.json" finalSettings;
     }
   ];
 
@@ -112,6 +118,27 @@ in
       '';
     };
 
+    extensions = mkOption {
+      type = types.listOf (types.either types.package types.path);
+      default = [ ];
+      example = literalExpression ''
+        [
+          ./some-extension
+          (pkgs.fetchzip {
+            url = "https://example.com/somezip.zip";
+            hash = "sha256-...";
+            stripRoot = false;
+          })
+        ]
+      '';
+      description = ''
+        Chrome manifest v3 extensions. Entries may have either a manifest.json or subdirectories with a manifest.json
+        A derivation whose $out looks the same may also be used
+        Extensions are loaded via loadExtension() from readonly store path
+        Nothing is copied into profile
+      '';
+    };
+
     env = mkOption {
       type = types.attrsOf (
         types.nullOr (
@@ -188,7 +215,7 @@ in
       // lib.optionalAttrs (cfg.pointerSpeed != null) {
         FBBROWSER_POINTER_SPEED = toString cfg.pointerSpeed;
       }
-      // lib.optionalAttrs (cfg.settings != { }) { FBBROWSER_CONFIG_DIR = "${configDir}"; }
+      // lib.optionalAttrs (finalSettings != { }) { FBBROWSER_CONFIG_DIR = "${configDir}"; }
       // lib.mapAttrs (_: envValue) (lib.filterAttrs (_: v: v != null) cfg.env);
 
       # eglfs needs EGL/GBM and the GPU driver from /run/opengl-driver.
@@ -197,6 +224,15 @@ in
       users.users = genAttrs cfg.users (_: {
         extraGroups = cfg.groups;
       });
+    }
+
+    {
+      assertions = [
+        {
+          assertion = cfg.extensions == [ ] || lib.versionAtLeast pkgs.qt6.qtwebengine.version "6.10";
+          message = "programs.framebuffer-browser.extensions requires Qt WebEngine >= 6.10.";
+        }
+      ];
     }
 
     (mkIf cfg.keepBluetoothAudio {

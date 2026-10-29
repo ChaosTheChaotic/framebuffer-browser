@@ -13,6 +13,8 @@
 #include <QNetworkProxy>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QWebEngineExtensionInfo>
+#include <QWebEngineExtensionManager>
 #include <QWebEngineFullScreenRequest>
 #include <QWebEngineProfile>
 #include <QWebEngineSettings>
@@ -273,8 +275,33 @@ void MainWindow::addNewTab(const QUrl &url) {
   }
 }
 
+namespace {
+constexpr int kExtensionStartupGraceMs = 2000;
+
+int loadExtensions(const QString &path, QWebEngineExtensionManager *extMgr) {
+  const QDir baseDir(path);
+  if (QFileInfo::exists(baseDir.absoluteFilePath("manifest.json"))) {
+    extMgr->loadExtension(baseDir.absolutePath());
+    return 1; // Dont bother scanning inside of extensions
+  }
+  int n = 0;
+  for (const QFileInfo &d :
+       baseDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+    if (QFileInfo::exists(
+            QDir(d.absoluteFilePath()).absoluteFilePath("manifest.json"))) {
+      extMgr->loadExtension(d.absoluteFilePath());
+      ++n;
+    }
+  }
+  return n;
+}
+} // namespace
+
 MainWindow::MainWindow() : QMainWindow() {
   loadConfig();
+
+  QWebEngineExtensionManager *extMgr =
+      QWebEngineProfile::defaultProfile()->extensionManager();
 
   appSettings = new QSettings(this);
 
@@ -348,6 +375,29 @@ MainWindow::MainWindow() : QMainWindow() {
   } else {
     QTimer::singleShot(0, this, &MainWindow::loadStartupUrl);
   }
+  if (!extMgr) {
+    qWarning() << "Extensions unavailable as extensionManager returned null";
+  } else {
+    connect(extMgr, &QWebEngineExtensionManager::loadFinished, this,
+            [this, extMgr](const QWebEngineExtensionInfo &i) {
+              if (!i.isLoaded())
+                qWarning() << "Failed to load extension" << i.path() << ":"
+                           << i.error();
+              else
+                extMgr->setExtensionEnabled(i, true);
+              if (pendingExts > 0 && --pendingExts == 0)
+                loadStartupUrl();
+            });
+
+    for (const QString &d : optExtensionDirs)
+      pendingExts += loadExtensions(d, extMgr);
+
+    if (pendingExts > 0) // safety if a loadFinished never arrives
+      QTimer::singleShot(kExtensionStartupGraceMs, this, [this] {
+        pendingExts = 0;
+        loadStartupUrl();
+      });
+  }
 }
 
 MainWindow::~MainWindow() {
@@ -370,7 +420,7 @@ void MainWindow::loadUrl(const QUrl &url) {
 }
 
 void MainWindow::loadStartupUrl() {
-  if (startupLoaded)
+  if (startupLoaded || pendingExts > 0)
     return;
   startupLoaded = true;
   loadUrl(omnibox->resolve(optStartupUrl));
@@ -404,6 +454,21 @@ void MainWindow::loadConfig() {
     return;
   }
 
+  const auto isHttpUrl = [](const QString &s) {
+    return s.startsWith("https://") || s.startsWith("http://");
+  };
+
+  const auto mkPathValidator = [](const char *missingMsg) {
+    return [missingMsg](QString p) -> std::optional<QString> {
+      if (p == "~" || p.startsWith("~/"))
+        p = QDir::homePath() + p.mid(1);
+      p = QDir(p).absolutePath();
+      if (!QDir(p).exists())
+        qWarning() << missingMsg << p;
+      return p;
+    };
+  };
+
   if (!haveUrlInCmdLine)
     readOpt(o, "url", optStartupUrl);
   readOpt(o, "width", optWidth);
@@ -430,7 +495,7 @@ void MainWindow::loadConfig() {
       qWarning() << "Expected adblockResources to be a string. Ignoring";
     } else {
       const QString u = it->toString();
-      if (u.isEmpty() || u.startsWith("https://") || u.startsWith("http://"))
+      if (u.isEmpty() || isHttpUrl(u))
         adblockCfg.resourcesUrl = u;
       else
         qWarning() << "Ignoring adblockResources that is not an http(s) URL:"
@@ -450,23 +515,19 @@ void MainWindow::loadConfig() {
 
   readStringArray(
       o, "adblockLists", adblockCfg.lists,
-      [](const QString &s) -> std::optional<QString> {
-        if (s.startsWith("https://") || s.startsWith("http://"))
+      [isHttpUrl](const QString &s) -> std::optional<QString> {
+        if (isHttpUrl(s))
           return s;
         qWarning() << "Ignoring adblock list that is not an http(s) URL:" << s;
         return std::nullopt;
       },
       "http(s) URLs");
 
-  readStringArray(
-      o, "adblockDirs", adblockCfg.localDirs,
-      [](QString p) -> std::optional<QString> {
-        if (p == "~" || p.startsWith("~/"))
-          p = QDir::homePath() + p.mid(1);
-        p = QDir(p).absolutePath();
-        if (!QDir(p).exists())
-          qWarning() << "adblock directory does not exist (yet):" << p;
-        return p;
-      },
-      "paths");
+  readStringArray(o, "adblockDirs", adblockCfg.localDirs,
+                  mkPathValidator("adblock directory does not exist (yet):"),
+                  "paths");
+
+  readStringArray(o, "extensionDirs", optExtensionDirs,
+                  mkPathValidator("Extension directories do not exist: "),
+                  "paths");
 }
