@@ -5,6 +5,7 @@
 #include "omnibox.hh"
 #include <QByteArray>
 #include <QCloseEvent>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QLineEdit>
 #include <QMainWindow>
@@ -72,7 +73,16 @@ private:
   bool optTldUpdate = true;
   Omnibox *omnibox = nullptr;
 
-	unsigned int pendingExts = 0;
+  QElapsedTimer startupClock;
+
+  void reloadStaleTabs(const std::function<bool(const QUrl &)> &pred);
+
+  unsigned int pendingExts = 0;
+  bool extsGaveUp = false;
+
+  bool adblockSettled = false;
+
+  int envGen = 0; // Changed when adblock scripst and extensions arrive
 
   void installShortcuts();
   void fullScreenRequested(QWebEngineFullScreenRequest request);

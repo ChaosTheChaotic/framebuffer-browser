@@ -82,6 +82,8 @@ struct ShortcutDef {
   QKeySequence seq;
   void (MainWindow::*slot)();
 };
+constexpr int kLateReloadWindowMs =
+    8000; // dont yank pages the user has settled into
 
 } // namespace
 
@@ -243,9 +245,26 @@ QWebEngineView *MainWindow::currentWebView() const {
   return qobject_cast<QWebEngineView *>(stackedWidget->currentWidget());
 }
 
+void MainWindow::reloadStaleTabs(
+    const std::function<bool(const QUrl &)> &pred) {
+  if (startupClock.elapsed() > kLateReloadWindowMs)
+    return; // next navigation picks the new environment up anyway
+  for (int i = 0; i < stackedWidget->count(); ++i) {
+    auto *v = qobject_cast<QWebEngineView *>(stackedWidget->widget(i));
+    if (!v || v->property("envGen").toInt() >= envGen)
+      continue;
+    const QUrl u = v->page()->requestedUrl(); // url() is empty mid load
+    if ((u.scheme() == "http" || u.scheme() == "https") && pred(u))
+      v->reload();
+  }
+}
+
 void MainWindow::addNewTab(const QUrl &url) {
   QWebEngineView *webView = new QWebEngineView(stackedWidget);
   configureWebView(webView);
+
+  connect(webView, &QWebEngineView::loadStarted, this,
+          [this, webView] { webView->setProperty("envGen", envGen); });
 
   connect(webView->page(), &QWebEnginePage::fullScreenRequested, this,
           &MainWindow::fullScreenRequested);
@@ -363,18 +382,31 @@ MainWindow::MainWindow() : QMainWindow() {
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/140.0.0.0 Safari/537.36");
 
+  startupClock.start();
+
   if (adblock) {
     adblockMgr = new AdBlockManager(adblockCfg, this);
     QWebEngineProfile::defaultProfile()->setUrlRequestInterceptor(
         adblockMgr->interceptor());
-    connect(adblockMgr, &AdBlockManager::settled, this,
-            &MainWindow::loadStartupUrl);
-    QTimer::singleShot(kAdblockStartupGraceMs, this,
-                       &MainWindow::loadStartupUrl);
+    const auto settle = [this] {
+      adblockSettled = true;
+      loadStartupUrl();
+    };
+    connect(adblockMgr, &AdBlockManager::settled, this, settle);
+    connect(adblockMgr, &AdBlockManager::scriptsInstalled, this, [this] {
+      ++envGen;
+      reloadStaleTabs([this](const QUrl &u) {
+        return adblockCfg.scriptletHosts.contains(u.host().toLower());
+      });
+    });
+    QTimer::singleShot(kAdblockStartupGraceMs, this, settle);
     adblockMgr->start();
   } else {
-    QTimer::singleShot(0, this, &MainWindow::loadStartupUrl);
+    adblockSettled = true;
   }
+
+  addNewTab(); // usable window right away, the startup URL loads into this tab
+
   if (!extMgr) {
     qWarning() << "Extensions unavailable as extensionManager returned null";
   } else {
@@ -385,19 +417,23 @@ MainWindow::MainWindow() : QMainWindow() {
                            << i.error();
               else
                 extMgr->setExtensionEnabled(i, true);
-              if (pendingExts > 0 && --pendingExts == 0)
+              if (pendingExts > 0 && --pendingExts == 0) {
+                ++envGen;
                 loadStartupUrl();
+                reloadStaleTabs([](const QUrl &) { return true; });
+              }
             });
 
     for (const QString &d : optExtensionDirs)
       pendingExts += loadExtensions(d, extMgr);
 
-    if (pendingExts > 0) // safety if a loadFinished never arrives
+    if (pendingExts > 0)
       QTimer::singleShot(kExtensionStartupGraceMs, this, [this] {
-        pendingExts = 0;
+        extsGaveUp = true; // stop waiting, but keep counting real arrivals
         loadStartupUrl();
       });
   }
+  QTimer::singleShot(0, this, &MainWindow::loadStartupUrl);
 }
 
 MainWindow::~MainWindow() {
@@ -410,20 +446,27 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::loadUrl(const QUrl &url) {
+  if (!url.isEmpty())
+    startupLoaded = true; // a user navigation beats the startup URL
   if (stackedWidget->count() == 0) {
     addNewTab(url);
-  } else {
-    QWebEngineView *view = currentWebView();
-    if (view && !url.isEmpty())
-      view->load(url);
+  } else if (QWebEngineView *view = currentWebView(); view && !url.isEmpty()) {
+    view->load(url);
   }
 }
 
 void MainWindow::loadStartupUrl() {
-  if (startupLoaded || pendingExts > 0)
+  if (startupLoaded)
+    return;
+  if (pendingExts > 0 && !extsGaveUp) // capped by a timer
+    return;
+  const QUrl url = omnibox->resolve(optStartupUrl);
+  // only hosts that get list derived scriptlets care
+  if (!adblockSettled &&
+      adblockCfg.scriptletHosts.contains(url.host().toLower()))
     return;
   startupLoaded = true;
-  loadUrl(omnibox->resolve(optStartupUrl));
+  loadUrl(url);
 }
 
 void MainWindow::slotShortcutNewTab() {

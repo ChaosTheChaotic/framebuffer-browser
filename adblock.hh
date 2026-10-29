@@ -110,6 +110,7 @@ public:
 signals:
   // Emitted once, when the first load from disk is done.
   void settled();
+  void scriptsInstalled(); // (re)build finished and host scriptlets in place
 
 private:
   void startJob(QList<Fetched> fresh);
@@ -123,7 +124,7 @@ private:
   void scheduleNextCheck();
 
   AdBlockConfig cfg_;
-	QStringList sources_;
+  QStringList sources_;
   std::unique_ptr<AdBlockInterceptor> interceptor_;
   QFutureWatcher<JobResult> watcher_;
   QTimer refreshTimer_;

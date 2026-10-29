@@ -447,6 +447,7 @@ void AdBlockManager::onJobFinished() {
     qInfo() << "adblock: engine ready -" << r.lists << "lists";
     // Before settled(), the first page must already find them installed.
     installScripts(r.scripts);
+    emit scriptsInstalled();
   } else if (!r.unchanged) {
     if (r.lists == 0)
       qInfo() << "adblock: no filter lists available (yet)";
