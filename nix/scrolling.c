@@ -122,6 +122,10 @@ static int is_touch_key(int code) {
   return 0;
 }
 
+static int on_main_thread(void) {
+  return (pid_t)syscall(SYS_gettid) == getpid();
+}
+
 static int is_input_char(int fd) {
   struct stat st;
   return fstat(fd, &st) == 0 && S_ISCHR(st.st_mode) &&
@@ -275,6 +279,11 @@ static void init_dev(struct dev_state *ds, int fd) {
   ds->synth_active = ds->has_mt ? 1 : 0;
   if (g_force_fd > 0 && fd != g_force_fd)
     ds->synth_active = 0;
+	int main_thr = on_main_thread();
+	if (ds->has_mt && !main_thr) {
+		ds->synth_active = 0;
+		ds->name_claim_checked = 1; // never takes part in name claiming
+	}
 
   ds->prev_cnt = 0;
   ds->jmp_max = (ds->abs_y_max - ds->abs_y_min) / 2;
@@ -283,11 +292,11 @@ static void init_dev(struct dev_state *ds, int fd) {
 
   log_msg("fd %d: mt=%d can_count=%d wheel=%d synth=%d rdev=%d:%d "
           "name='%s' range=[%d,%d] thr=%.1f jmp_max=%d "
-          "strip=%d claim=%d force_fd=%d",
+          "strip=%d claim=%d force_fd=%d main_thread=%d",
           fd, ds->has_mt, ds->can_count, ds->has_wheel, ds->synth_active,
           (int)major(ds->rdev), (int)minor(ds->rdev), ds->name, ds->abs_y_min,
           ds->abs_y_max, ds->threshold, ds->jmp_max, g_strip, g_claim,
-          g_force_fd);
+          g_force_fd, main_thr);
 }
 
 static struct dev_state *find_dev(int fd) {
