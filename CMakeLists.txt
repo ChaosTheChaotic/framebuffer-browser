@@ -18,7 +18,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Network WebEngineWidgets Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui GuiPrivate Network WebEngineWidgets Concurrent)
 add_definitions (-DQT_DISABLE_DEPRECATED_BEFORE=0x060000)
 
 find_library(FBB_ADBLOCK fbb_adblock REQUIRED)
@@ -41,6 +41,7 @@ add_executable(fbbrowser
 target_link_libraries(fbbrowser PRIVATE
 	Qt6::Core
 	Qt6::Gui
+	Qt6::GuiPrivate
 	Qt6::WebEngineWidgets
 	Qt6::Network
 	Qt6::Concurrent
