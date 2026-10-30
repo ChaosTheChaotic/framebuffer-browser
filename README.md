@@ -8,7 +8,7 @@ A small QtWebEngine (Chromium) web browser for the Linux console. It draws strai
 - Tabs, an address bar that tells URLs from searches, and keyboard navigation.
 - Built-in ad and tracker blocking (uBlock Origin / EasyList filter lists, handled by a Rust engine), including special handling for YouTube.
 - Chrome extensions (Manifest V3), installable from the Chrome Web Store, from `.crx`/`.zip` files or from unpacked folders.
-- Mouse, keyboard and touchpad input through evdev, with pointer-speed scaling and two-finger scrolling for touchpads.
+- Mouse, keyboard and touchpad input through libinput or plain evdev, with pointer-speed scaling and two-finger scrolling for touchpads.
 - Full-screen video (YouTube etc.).
 - A NixOS module and flake that handle permissions, configuration and extensions declaratively.
 
@@ -67,6 +67,7 @@ Only one URL is accepted, and Chromium flags cannot be passed as arguments. Use 
 | `--install-extension <src>` | Install a Chrome extension. See [Extensions](#extensions). |
 | `--list-extensions` | List installed extensions. |
 | `--remove-extension <name>` | Remove an installed extension. |
+| `--chromium-version` | Print the Chromium version of the Qt WebEngine this build runs on. |
 
 ### Backends
 
@@ -120,7 +121,7 @@ Searches use `searchUrl` (default DuckDuckGo). The list of valid TLDs is cached 
 
 - JavaScript cannot open new windows: `window.open` and `target="_blank"` links do nothing.
 - JavaScript may access the clipboard. Local files may read other local files and remote URLs.
-- The browser identifies itself as desktop Chrome 140 on Linux x86_64 (also on aarch64).
+- The browser identifies itself as desktop Chrome 140 on Linux x86_64 (also on aarch64). This string is hard-coded in `mainwindow.cc` and does not follow the engine version.
 - Cookies, local storage and cache are persistent and live in Qt's default WebEngine profile location (`~/.local/share/framebuffer-browser` and `~/.cache/framebuffer-browser`).
 - There is no history, bookmarks or download manager UI, and no toolbar buttons for extensions.
 
@@ -207,7 +208,7 @@ fbbrowser --remove-extension abcdefghijklmnopabcdefghijklmnop
 
 Restart the browser afterwards. A Web Store id is downloaded from Google's update service as a `.crx`; the CRX header (version 2 or 3) is skipped and the zip inside is unpacked into the extension folder. Installing again replaces the old copy.
 
-Installed extensions live in `${XDG_DATA_HOME:-~/.local/share}/framebuffer-browser/extensions`. Override the folder with `FBBROWSER_EXTENSIONS_DIR`. `FBBROWSER_CHROME_VERSION` changes the Chrome version claimed when downloading (default `140.0.0.0`) in case the store refuses the request.
+Installed extensions live in `${XDG_DATA_HOME:-~/.local/share}/framebuffer-browser/extensions`. Override the folder with `FBBROWSER_EXTENSIONS_DIR`. The download claims the Chromium version the browser really runs on (`fbbrowser --chromium-version`, e.g. `134.0.6998.208` for Qt 6.10 and `140.0.7339.264` for Qt 6.11). The Web Store uses it to hand out the newest release of the extension that supports that engine. Set `FBBROWSER_CHROME_VERSION` to claim something else.
 
 One caveat: an unpacked extension gets an id derived from its folder, not its Web Store id, unless its manifest contains a `key`. Extensions that depend on a fixed id (some OAuth flows, `externally_connectable`) may therefore not work.
 
@@ -246,7 +247,7 @@ Both shims turn themselves off inside Chromium's helper processes.
 | `FBBROWSER_BACKEND` | Default for `--backend`. |
 | `FBBROWSER_CONFIG_DIR` | Directory holding `config.json`. |
 | `FBBROWSER_EXTENSIONS_DIR` | Folder for installed extensions. |
-| `FBBROWSER_CHROME_VERSION` | Chrome version claimed for Web Store downloads. |
+| `FBBROWSER_CHROME_VERSION` | Chrome version claimed for Web Store downloads. Default: the engine's own, see `--chromium-version`. |
 | `FBBROWSER_DRM_DEVICE` | DRM node for `eglfs`, e.g. `/dev/dri/card2`. Default: first node with display outputs. |
 | `FBBROWSER_FB_DEVICE` | Framebuffer node for `linuxfb`. |
 | `FBBROWSER_KEYBOARD_DEV`, `FBBROWSER_MOUSE_DEV`, `FBBROWSER_TOUCHSCREEN_DEV` | Pin input devices (evdev). |
@@ -327,7 +328,7 @@ Session variables only apply to new logins, so log out and in again after changi
 | `hardwareCursor` | `false` | Sets `FBBROWSER_HWCURSOR=1`. |
 | `pointerSpeed` | `null` | Sets `FBBROWSER_POINTER_SPEED`. `null` leaves the default. |
 | `settings` | `{ }` | Contents of `config.json`, written as is. Any key from [Configuration](#configuration) works. |
-| `extensions` | `[ ]` | Extensions to load. Each entry may be an unpacked directory (or a derivation producing one), a `.crx`/`.zip` file, or `{ id; hash; name?; prodversion?; }` for the Chrome Web Store. Requires Qt WebEngine 6.10+. |
+| `extensions` | `[ ]` | Extensions to load. Each entry may be an unpacked directory, a `.crx`/`.zip` file, a derivation or flake input that is any of those, or `{ id; hash; name?; prodversion?; }` for the Chrome Web Store. Requires Qt WebEngine 6.10+. |
 | `env` | `{ }` | Extra session variables. Booleans become `1`/`0`, `null` removes a variable. These win over the dedicated options. |
 | `users` | `[ ]` | Users added to `groups`. Opt-in on purpose: `input` can read every keystroke on the machine. |
 | `groups` | `tty video audio input render` | Groups granted to `users`. |
@@ -336,8 +337,30 @@ Session variables only apply to new logins, so log out and in again after changi
 ### Things to know about NixOS
 
 - When `settings` or `extensions` is non-empty, `FBBROWSER_CONFIG_DIR` points at a **read-only** store directory, so `~/.config/fbbrowser/config.json` is no longer used. When both are empty, the launcher manages that file as usual.
+- A `.crx`, `.zip` or directory is recognised while building, not by its file name, so anything can be passed in, including a flake input (see below). No hash is needed for those.
 - Web Store entries (`{ id; hash; }`) fetch the *newest* version, so the hash stops matching when the extension updates and the build fails with the new hash. To get the first hash, set `hash = "";`, rebuild and copy it from the error. For a stable build, download the `.crx` once, keep it in your configuration repository and list the file instead.
+- Web Store entries claim the Chromium base version of your Qt WebEngine: `134.0.0.0` for Qt 6.10 and `140.0.0.0` for 6.11 and later. This is derived from `pkgs.qt6.qtwebengine.version`, rounding *down*, which is always safe. Override it per entry with `prodversion`.
 - Extensions added with `fbbrowser --install-extension` also work on NixOS; they go to your user's data directory, not the store.
+
+### Extensions from flake inputs (no hash in your configuration)
+
+A flake input is pinned by `flake.lock`, so the `.crx` needs no `hash` in your own configuration. Declare it with `flake = false`:
+
+```nix
+inputs.ublock-crx = {
+  flake = false;
+  type = "file";
+  url = "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=134.0.0.0&acceptformat=crx2,crx3&x=id%3Dabcdefghijklmnopabcdefghijklmnop%26installsource%3Dondemand%26uc";
+};
+```
+
+The URL in an input is fixed, so it cannot follow your Qt version; `134.0.0.0` is the floor that is safe on Qt 6.10 and newer. Then use it (pass `inputs` to your modules, e.g. with `specialArgs`):
+
+```nix
+programs.framebuffer-browser.extensions = [ inputs.ublock-crx ];
+```
+
+`nix flake update ublock-crx` moves it to the newest release. A `.crx` hosted in a git repository or tarball (`github:you/extensions` with `flake = false`) or simply committed next to your configuration (`./foo.crx`) works the same way and never changes unless you change it.
 
 ## Files and directories
 

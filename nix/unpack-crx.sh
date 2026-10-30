@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Usage: unpack-crx <file.crx|file.zip> <outdir>
+# Usage: unpack-crx <file.crx|file.zip|directory> <outdir>
 #
 # Turns a Chrome Web Store package into an unpacked extension directory that
-# QWebEngineExtensionManager::loadExtension() accepts
-# A .crx is a zip with a header in front, so the header is skipped and the rest unzipped.
+# QWebEngineExtensionManager::loadExtension() accepts. A .crx is a zip with a
+# header in front, so the header is skipped and the rest unzipped.
 #   CRX3: "Cr24" | version=3 | header_len (u32) | header | zip
 #   CRX2: "Cr24" | version=2 | key_len (u32) | sig_len (u32) | key | sig | zip
-# A file without the "Cr24" magic is treated as a plain zip.
+# A file without the "Cr24" magic is treated as a plain zip. A directory is
+# copied as is (so any flake input or store path can be passed in without
+# knowing what it is).
 set -euo pipefail
 export LC_ALL=C
 
@@ -16,6 +18,14 @@ export LC_ALL=C
 }
 src=$1
 out=$2
+
+if [ -d "$src" ]; then
+	mkdir -p "$out"
+	cp -R --no-preserve=mode,ownership "$src"/. "$out"/
+	chmod -R u+w "$out"
+	rm -rf "$out/_metadata"
+	exit 0
+fi
 
 u32() { od -An -tu4 --endian=little -j"$2" -N4 "$1" | tr -d '[:space:]'; }
 

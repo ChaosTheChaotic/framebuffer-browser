@@ -21,6 +21,7 @@ let
   json = pkgs.formats.json { };
   crx = pkgs.callPackage ./crx.nix { };
 
+  # Get from web store
   crxSpec = types.submodule {
     options = {
       id = mkOption {
@@ -43,34 +44,37 @@ let
         description = "Name used in the store path. Defaults to the id.";
       };
       prodversion = mkOption {
-        type = types.str;
-        default = "140.0.0.0";
-        description = "Chromium version the download request claims.";
+        type = types.nullOr types.str;
+        default = null;
+        example = "134.0.0.0";
+        description = ''
+          Chromium version the download request claims; the store then serves the
+          newest extension release that supports it. The default (`null`) follows
+          the Chromium base of the Qt WebEngine this system builds against.
+        '';
       };
     };
   };
 
-  isPackedFile = e: !(lib.isDerivation e) && (lib.hasSuffix ".crx" (toString e) || lib.hasSuffix ".zip" (toString e));
-
+  # Everything the browser loads has to be an unpacked directory
+  # Anything with an outPath is a .crx, .zip or directory
+  # which one is decided at build time. Only a plain { id; hash; } attrset is a Web Store download.
   toExtensionDir =
     e:
-    if lib.isDerivation e then
-      e
-    else if builtins.isAttrs e then
+    if builtins.isAttrs e && !(e ? outPath) then
       crx.fetchCrx {
         inherit (e) id hash prodversion;
         name = if e.name == null then e.id else e.name;
       }
-    else if isPackedFile e then
-      crx.unpackCrx { src = e; }
     else
-      e;
+      crx.unpackCrx { src = e; };
 
   # The launcher reads config.json from FBBROWSER_CONFIG_DIR
   finalSettings =
     cfg.settings
     // lib.optionalAttrs (cfg.extensions != [ ]) {
-      extensionDirs = (cfg.settings.extensionDirs or [ ]) ++ map (e: "${toExtensionDir e}") cfg.extensions;
+      extensionDirs =
+        (cfg.settings.extensionDirs or [ ]) ++ map (e: "${toExtensionDir e}") cfg.extensions;
     };
 
   configDir = pkgs.linkFarm "fbbrowser-config" [
@@ -176,10 +180,13 @@ in
       default = [ ];
       example = literalExpression ''
         [
+          # an unpacked extension directory (has manifest.json), or a directory of them
           ./some-extension
+          # a packed .crx or .zip, unpacked at build time
           ./other-extension.crx
-					./some-other-extension.zip
-          # download from the Chrome Web Store, the id is the last part of its URL
+          # or a flake input (`flake = false`), no hash needed here: flake.lock pins it
+          inputs.some-crx
+          # download from the Chrome Web Store: the id is the last part of its URL
           {
             id = "abcdefghijklmnopabcdefghijklmnop";
             hash = "sha256-...";
@@ -196,10 +203,12 @@ in
         and Qt WebEngine must be 6.10 or newer.
 
         Each entry may be an unpacked directory (with a `manifest.json`, or with
-        subdirectories that have one), a derivation producing such a directory,
-        a `.crx` / `.zip` file, or `{ id; hash; }` to fetch from the Chrome Web
-        Store. Packed files are unpacked at build time. Nothing is copied into
-        the profile: extensions are loaded from the read-only store path.
+        subdirectories that have one), a `.crx` / `.zip` file, a derivation or
+        flake input producing any of those, or `{ id; hash; }` to fetch from the
+        Chrome Web Store. Whether something is packed is detected while building,
+        not from its name, so a flake input (`/nix/store/...-source`) works. Nothing
+        is copied into the profile: extensions are loaded from the read-only
+        store path.
 
         Extensions added at run time with `fbbrowser --install-extension` live
         in `~/.local/share/framebuffer-browser/extensions` and are loaded as well.

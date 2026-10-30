@@ -45,6 +45,8 @@ Extensions (Manifest V3 only; these commands do not start the browser):
                   start. Restart the browser afterwards.
   --list-extensions
                   List installed extensions (name and version)
+  --chromium-version
+                  Print the Chromium version of the bundled Qt WebEngine
   --remove-extension <name>
                   Remove one, using the name that --list-extensions prints
 
@@ -118,7 +120,9 @@ Environment:
                              browser looks for them (default:
                              \${XDG_DATA_HOME:-~/.local/share}/framebuffer-browser/extensions)
   FBBROWSER_CHROME_VERSION   Chrome version claimed when downloading from the
-                             Web Store (default 140.0.0.0)
+                             Web Store. Default: the Chromium base version of
+                             the Qt WebEngine this browser runs on (see
+                             fbbrowser --chromium-version)
   QT_QPA_EGLFS_KMS_CONFIG    Your own Qt KMS JSON; stops the launcher generating one
                              (then hwcursor is whatever your JSON says)
   QT_QPA_PLATFORM            If set and backend is 'auto', used as-is (no detection)
@@ -185,6 +189,10 @@ while [ $# -gt 0 ]; do
 			action=list
 			shift
 			;;
+		--chromium-version)
+			action=chromium
+			shift
+			;;
 		-h | --help)
 			usage
 			exit 0
@@ -204,6 +212,17 @@ ext_dir() {
 	printf '%s\n' "${FBBROWSER_EXTENSIONS_DIR:-${XDG_DATA_HOME:-${HOME:?HOME is not set}/.local/share}/framebuffer-browser/extensions}"
 }
 
+# Chromium base version of the Qt WebEngine this build runs on, asked of the
+# binary itself. The Web Store uses it to pick an extension release that works.
+chromium_version() {
+	local v=${FBBROWSER_CHROME_VERSION:-}
+	[ -n "$v" ] || v=$("$real_bin" --chromium-version 2>/dev/null || true)
+	case "$v" in
+		[0-9]*.[0-9]*.[0-9]*.[0-9]*) printf '%s\n' "$v" ;;
+		*) printf '134.0.0.0\n' ;; # oldest base of any Qt with extension support
+	esac
+}
+
 install_extension() {
 	local src=$1 dir name file="" id="" tmp
 	local store_re='^https://(chromewebstore\.google\.com|chrome\.google\.com/webstore)/.*/([a-p]{32})([/?#]|$)'
@@ -212,7 +231,7 @@ install_extension() {
 	dir=$(ext_dir)
 	mkdir -p "$dir"
 	tmp=$(mktemp -d "$dir/.tmp.XXXXXX")
-	trap "rm -rf ${tmp@Q}" EXIT # expanded now so $tmp is local and gone when the trap runs
+	trap "rm -rf ${tmp@Q}" EXIT # expanded now: $tmp is local and gone when the trap runs
 
 	if [[ $src =~ ^[a-p]{32}$ ]]; then
 		id=$src
@@ -225,7 +244,7 @@ install_extension() {
 		file=$tmp/ext.crx
 		note "downloading $id from the Chrome Web Store"
 		"${dl[@]}" -o "$file" \
-			"https://clients2.google.com/service/update2/crx?response=redirect&prodversion=${FBBROWSER_CHROME_VERSION:-140.0.0.0}&acceptformat=crx2,crx3&x=id%3D${id}%26installsource%3Dondemand%26uc" ||
+			"https://clients2.google.com/service/update2/crx?response=redirect&prodversion=$(chromium_version)&acceptformat=crx2,crx3&x=id%3D${id}%26installsource%3Dondemand%26uc" ||
 			die "download failed (wrong id, or the store refused the request)"
 	elif [[ $src == http://* || $src == https://* ]]; then
 		name=$(basename "${src%%[?#]*}")
@@ -286,6 +305,7 @@ if [ "$action" != run ]; then
 		install) install_extension "$action_arg" ;;
 		remove) remove_extension "$action_arg" ;;
 		list) list_extensions ;;
+		chromium) "$real_bin" --chromium-version ;;
 	esac
 	exit 0
 fi
