@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/adblock">
-        <file alias="youtube.js">adblock_youtube.js</file>
+        <file alias="adblock_youtube.js">adblock_youtube.js</file>
+        <file alias="sponsorblock_youtube.js">sponsorblock_youtube.js</file>
     </qresource>
 </RCC>

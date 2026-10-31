@@ -417,7 +417,7 @@ AdBlockManager::AdBlockManager(AdBlockConfig cfg, QWebEngineProfile *profile,
 AdBlockManager::~AdBlockManager() { watcher_.waitForFinished(); }
 
 void AdBlockManager::start() {
-  installYoutubeScript(); // before the first navigation, needs no lists
+  installYoutubeScripts(); // before the first navigation, needs no lists
   startJob({});
 }
 
@@ -498,27 +498,34 @@ void AdBlockManager::installScripts(const QList<HostScript> &scripts) {
   }
 }
 
-void AdBlockManager::installYoutubeScript() {
+void AdBlockManager::installYoutubeScripts() {
   // "adblockScriptletHosts": [] (no YouTube host) is the off switch.
   const bool wanted = std::any_of(
       cfg_.scriptletHosts.cbegin(), cfg_.scriptletHosts.cend(),
       [](const QString &h) { return h.contains(QLatin1String("youtube")); });
   if (!wanted)
     return;
-  QFile file(QStringLiteral(":/adblock/youtube.js"));
-  if (!file.open(QIODevice::ReadOnly)) {
-    qWarning() << "adblock: the YouTube script is missing from the resources";
-    return;
+  static const struct {
+    const char *name;
+    const char *res;
+  } scripts[] = {
+      {"fbb-youtube", ":/adblock/adblock_youtube.js"},
+      {"fbb-sponsorblock", ":/adblock/sponsorblock_youtube.js"},
+  };
+  for (const auto &e : scripts) {
+    QFile file(QString::fromLatin1(e.res));
+    if (!file.open(QIODevice::ReadOnly)) {
+      qWarning() << "adblock: missing resource" << e.res;
+      continue;
+    }
+    QWebEngineScript s;
+    s.setName(QString::fromLatin1(e.name));
+    s.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    s.setWorldId(QWebEngineScript::MainWorld);
+    s.setRunsOnSubFrames(true);
+    s.setSourceCode(QString::fromUtf8(file.readAll()));
+    profile_->scripts()->insert(s);
   }
-  // installScripts() only ever removes "fbb-adblock:" scripts,
-  // so this one survives every engine rebuild. It checks the hostname itself.
-  QWebEngineScript s;
-  s.setName(QStringLiteral("fbb-youtube"));
-  s.setInjectionPoint(QWebEngineScript::DocumentCreation); // before page JS
-  s.setWorldId(QWebEngineScript::MainWorld);
-  s.setRunsOnSubFrames(true); // embedded players are iframes
-  s.setSourceCode(QString::fromUtf8(file.readAll()));
-  profile_->scripts()->insert(s);
 }
 
 void AdBlockManager::checkForUpdates() {

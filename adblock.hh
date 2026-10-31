@@ -117,7 +117,7 @@ private:
   void startJob(QList<Fetched> fresh);
   void onJobFinished();
   void installScripts(const QList<HostScript> &scripts);
-  void installYoutubeScript();
+  void installYoutubeScripts();
   void checkForUpdates();
   void fetch(const QString &url);
   void onReply(QNetworkReply *reply, const QString &url);
