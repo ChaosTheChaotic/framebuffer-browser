@@ -541,7 +541,7 @@ if [ "$dry_run" = 1 ]; then
 	printf 'extensions: %s\n' "$FBBROWSER_EXTENSIONS_DIR"
 	while IFS= read -r name; do
 		case "$name" in QT_QPA_* | QTWEBENGINE_* | QT_LOGGING_*) printf '%s=%s\n' "$name" "${!name}" ;; esac
-	done < <(compgen -e | sort)
+	done < <(env | sed 's/=.*$//' | sort)
 	if [ "$write_kms_json" = 1 ]; then printf 'kms.json:   {"device": "%s", "hwcursor": %s}\n' "$drm_node" "$hwcursor"; fi
 	printf 'command:   '
 	printf ' %q' "${cmd[@]}"

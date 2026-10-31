@@ -426,11 +426,14 @@ MainWindow::MainWindow() : QMainWindow() {
   } else {
     connect(extMgr, &QWebEngineExtensionManager::loadFinished, this,
             [this, extMgr](const QWebEngineExtensionInfo &i) {
-              if (!i.isLoaded())
+              if (!i.isLoaded()) {
                 qWarning() << "Failed to load extension" << i.path() << ":"
                            << i.error();
-              else
+              } else {
+                qInfo() << "Loaded extension" << i.name() << i.path()
+                        << "enabled?" << i.isEnabled();
                 extMgr->setExtensionEnabled(i, true);
+              }
               if (pendingExts > 0 && --pendingExts == 0) {
                 ++envGen;
                 loadStartupUrl();
