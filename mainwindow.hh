@@ -15,6 +15,7 @@
 #include <QTabBar>
 #include <QWebEngineFullScreenRequest>
 #include <QWebEnginePage>
+#include <QWebEngineProfile>
 #include <QWebEngineView>
 #include <QWidget>
 
@@ -88,6 +89,7 @@ private:
   void fullScreenRequested(QWebEngineFullScreenRequest request);
   void writeSettings();
   QSettings *appSettings;
+  QWebEngineProfile *profile = nullptr; // Persistent which extensions need
   AdBlockManager *adblockMgr = nullptr;
   bool startupLoaded = false;
   Qt::WindowStates prevState = Qt::WindowNoState;

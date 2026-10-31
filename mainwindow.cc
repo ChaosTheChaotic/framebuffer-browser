@@ -262,6 +262,7 @@ void MainWindow::reloadStaleTabs(
 
 void MainWindow::addNewTab(const QUrl &url) {
   QWebEngineView *webView = new QWebEngineView(stackedWidget);
+  webView->setPage(new QWebEnginePage(profile, webView));
   configureWebView(webView);
 
   connect(webView, &QWebEngineView::loadStarted, this,
@@ -333,8 +334,10 @@ MainWindow::MainWindow() : QMainWindow() {
       optExtensionDirs.prepend(userExtDir);
   }
 
-  QWebEngineExtensionManager *extMgr =
-      QWebEngineProfile::defaultProfile()->extensionManager();
+  // Extensions dont load in OTR profile, and default is OTR
+  // Profiles with storage name is persistent
+  profile = new QWebEngineProfile(QStringLiteral("fbbrowser"), this);
+  QWebEngineExtensionManager *extMgr = profile->extensionManager();
 
   appSettings = new QSettings(this);
 
@@ -392,16 +395,15 @@ MainWindow::MainWindow() : QMainWindow() {
 
   installShortcuts();
 
-  QWebEngineProfile::defaultProfile()->setHttpUserAgent(
+  profile->setHttpUserAgent(
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/140.0.0.0 Safari/537.36");
 
   startupClock.start();
 
   if (adblock) {
-    adblockMgr = new AdBlockManager(adblockCfg, this);
-    QWebEngineProfile::defaultProfile()->setUrlRequestInterceptor(
-        adblockMgr->interceptor());
+    adblockMgr = new AdBlockManager(adblockCfg, profile, this);
+    profile->setUrlRequestInterceptor(adblockMgr->interceptor());
     const auto settle = [this] {
       adblockSettled = true;
       loadStartupUrl();
@@ -426,14 +428,11 @@ MainWindow::MainWindow() : QMainWindow() {
   } else {
     connect(extMgr, &QWebEngineExtensionManager::loadFinished, this,
             [this, extMgr](const QWebEngineExtensionInfo &i) {
-              if (!i.isLoaded()) {
+              if (!i.isLoaded())
                 qWarning() << "Failed to load extension" << i.path() << ":"
                            << i.error();
-              } else {
-                qInfo() << "Loaded extension" << i.name() << i.path()
-                        << "enabled?" << i.isEnabled();
+              else
                 extMgr->setExtensionEnabled(i, true);
-              }
               if (pendingExts > 0 && --pendingExts == 0) {
                 ++envGen;
                 loadStartupUrl();
@@ -459,7 +458,7 @@ MainWindow::~MainWindow() {
     stackedWidget->removeWidget(w);
     delete w;
   }
-  QWebEngineProfile::defaultProfile()->setUrlRequestInterceptor(nullptr);
+  profile->setUrlRequestInterceptor(nullptr);
 }
 
 void MainWindow::loadUrl(const QUrl &url) {

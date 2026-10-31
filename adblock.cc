@@ -402,8 +402,9 @@ void AdBlockInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info) {
     info.block(true);
 }
 
-AdBlockManager::AdBlockManager(AdBlockConfig cfg, QObject *parent)
-    : QObject(parent), cfg_(std::move(cfg)),
+AdBlockManager::AdBlockManager(AdBlockConfig cfg, QWebEngineProfile *profile,
+                               QObject *parent)
+    : QObject(parent), cfg_(std::move(cfg)), profile_(profile),
       interceptor_(new AdBlockInterceptor), retryMs_(kFirstRetryMs) {
   refreshTimer_.setSingleShot(true);
   sources_ = cfg_.sources();
@@ -472,8 +473,7 @@ void AdBlockManager::onJobFinished() {
 
 void AdBlockManager::installScripts(const QList<HostScript> &scripts) {
   static constexpr QLatin1String prefix("fbb-adblock:");
-  QWebEngineScriptCollection *coll =
-      QWebEngineProfile::defaultProfile()->scripts();
+  QWebEngineScriptCollection *coll = profile_->scripts();
   // Replace what an earlier build installed
   // Pages that are already loaded keep running the old script, the next
   // navigation picks up the new one.
@@ -518,7 +518,7 @@ void AdBlockManager::installYoutubeScript() {
   s.setWorldId(QWebEngineScript::MainWorld);
   s.setRunsOnSubFrames(true); // embedded players are iframes
   s.setSourceCode(QString::fromUtf8(file.readAll()));
-  QWebEngineProfile::defaultProfile()->scripts()->insert(s);
+  profile_->scripts()->insert(s);
 }
 
 void AdBlockManager::checkForUpdates() {

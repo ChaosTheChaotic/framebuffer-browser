@@ -15,6 +15,7 @@
 
 class QNetworkAccessManager;
 class QNetworkReply;
+class QWebEngineProfile;
 
 struct AdBlockConfig {
   bool download = false; // fetch + refresh the remote lists
@@ -97,7 +98,7 @@ private:
 class AdBlockManager : public QObject {
   Q_OBJECT
 public:
-  explicit AdBlockManager(AdBlockConfig cfg, QObject *parent = nullptr);
+  explicit AdBlockManager(AdBlockConfig cfg, QWebEngineProfile *profile, QObject *parent = nullptr);
   // Waits for a build that is still running
   ~AdBlockManager() override;
 
@@ -124,6 +125,7 @@ private:
   void scheduleNextCheck();
 
   AdBlockConfig cfg_;
+	QWebEngineProfile *profile_;
   QStringList sources_;
   std::unique_ptr<AdBlockInterceptor> interceptor_;
   QFutureWatcher<JobResult> watcher_;
