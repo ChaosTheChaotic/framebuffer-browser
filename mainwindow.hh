@@ -86,6 +86,9 @@ private:
   int envGen = 0; // Changed when adblock scripst and extensions arrive
 
   void installShortcuts();
+  void installVimKeys();
+  void vimCommand(QWebEngineView *src, const QString &cmd);
+  QString vimToken; // random per run, only known to the injected script
   void fullScreenRequested(QWebEngineFullScreenRequest request);
   void writeSettings();
   QSettings *appSettings;

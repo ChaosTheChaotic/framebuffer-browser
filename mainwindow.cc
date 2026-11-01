@@ -3,6 +3,7 @@
 #include "omnibox.hh"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -13,12 +14,16 @@
 #include <QNetworkProxy>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QUuid>
 #include <QVBoxLayout>
 #include <QWebEngineExtensionInfo>
 #include <QWebEngineExtensionManager>
 #include <QWebEngineFullScreenRequest>
 #include <QWebEngineProfile>
+#include <QWebEngineScript>
+#include <QWebEngineScriptCollection>
 #include <QWebEngineSettings>
+#include <functional>
 #include <optional>
 #include <utility>
 
@@ -92,6 +97,89 @@ constexpr int kLateReloadWindowMs =
 //   // writeSettings();
 // }
 
+namespace {
+// Receives the commands vimkeys.js sends as console.log(TOKEN + cmd). Messages
+// that don't carry the token are ordinary page console output.
+class VimPage : public QWebEnginePage {
+public:
+  VimPage(QWebEngineProfile *profile, QString token,
+          std::function<void(const QString &)> onCmd, QObject *parent)
+      : QWebEnginePage(profile, parent), token_(std::move(token)),
+        onCmd_(std::move(onCmd)) {}
+
+protected:
+  void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level,
+                                const QString &msg, int line,
+                                const QString &src) override {
+    if (msg.startsWith(token_)) {
+      onCmd_(msg.mid(token_.size()));
+      return;
+    }
+    QWebEnginePage::javaScriptConsoleMessage(level, msg, line, src);
+  }
+
+private:
+  QString token_;
+  std::function<void(const QString &)> onCmd_;
+};
+} // namespace
+
+void MainWindow::installVimKeys() {
+  QFile f(QStringLiteral(":/vimkeys/vimkeys.js"));
+  if (!f.open(QIODevice::ReadOnly)) {
+    qWarning() << "vimkeys: missing resource :/vimkeys/vimkeys.js";
+    return;
+  }
+  QString src = QString::fromUtf8(f.readAll());
+  src.replace(QStringLiteral("__FBB_TOKEN__"), vimToken);
+
+  QWebEngineScript s;
+  s.setName(QStringLiteral("fbb-vimkeys")); // adblock only removes "fbb-adblock:*"
+  s.setInjectionPoint(QWebEngineScript::DocumentCreation);
+  s.setWorldId(QWebEngineScript::ApplicationWorld); // isolated from the page
+  s.setRunsOnSubFrames(false);
+  s.setSourceCode(src);
+  profile->scripts()->insert(s);
+}
+
+void MainWindow::vimCommand(QWebEngineView *src, const QString &cmd) {
+  if (src != currentWebView())
+    return; // a background tab must not drive the browser
+  const int sp = cmd.indexOf(QLatin1Char(' '));
+  const QString name = sp < 0 ? cmd : cmd.left(sp);
+  const QString arg = sp < 0 ? QString() : cmd.mid(sp + 1);
+  const int n = stackedWidget->count();
+
+  if (name == QLatin1String("tabnext") && n > 1) {
+    tabBar->setCurrentIndex((tabBar->currentIndex() + 1) % n);
+  } else if (name == QLatin1String("tabprev") && n > 1) {
+    tabBar->setCurrentIndex((tabBar->currentIndex() + n - 1) % n);
+  } else if (name == QLatin1String("tabnew")) {
+    slotShortcutNewTab();
+  } else if (name == QLatin1String("tabclose")) {
+    slotShortcutCloseTab(stackedWidget->indexOf(src));
+  } else if (name == QLatin1String("urlfocus")) {
+    slotShortcutFocusUrl();
+  } else if (name == QLatin1String("open")) {
+    const QUrl u(arg);
+    if (u.scheme() == QLatin1String("http") ||
+        u.scheme() == QLatin1String("https"))
+      addNewTab(u);
+  } else if (name == QLatin1String("yank")) {
+    QGuiApplication::clipboard()->setText(arg);
+  } else if (name == QLatin1String("paste") ||
+             name == QLatin1String("pastetab")) {
+    const QString text = QGuiApplication::clipboard()->text().trimmed();
+    if (text.isEmpty())
+      return;
+    const QUrl u = omnibox->resolve(text);
+    if (name == QLatin1String("pastetab"))
+      addNewTab(u);
+    else
+      src->load(u);
+  }
+}
+
 void MainWindow::configureWebView(QWebEngineView *view) {
   view->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
   view->settings()->setAttribute(QWebEngineSettings::PluginsEnabled, true);
@@ -118,6 +206,10 @@ void MainWindow::configureWebView(QWebEngineView *view) {
 // }
 
 void MainWindow::fullScreenRequested(QWebEngineFullScreenRequest request) {
+  // A window-wide Escape shortcut would swallow Escape before the page (and
+  // vimkeys.js) sees it, so it is only live while a page is fullscreen.
+  if (auto it = bindings.find("exitFull"); it != bindings.end() && it->shortcut)
+    it->shortcut->setEnabled(request.toggleOn());
   if (request.toggleOn()) {
     prevState = windowState();
     tabBar->hide();
@@ -153,6 +245,7 @@ void MainWindow::installShortcuts() {
     connect(b.shortcut, &QShortcut::activated, this, b.slot);
     seqToName.insert(b.seq, name);
   }
+  bindings["exitFull"].shortcut->setEnabled(false); // see fullScreenRequested
 }
 
 // Rebind a named action at runtime
@@ -262,7 +355,10 @@ void MainWindow::reloadStaleTabs(
 
 void MainWindow::addNewTab(const QUrl &url) {
   QWebEngineView *webView = new QWebEngineView(stackedWidget);
-  webView->setPage(new QWebEnginePage(profile, webView));
+  webView->setPage(new VimPage(
+      profile, vimToken,
+      [this, webView](const QString &cmd) { vimCommand(webView, cmd); },
+      webView));
   configureWebView(webView);
 
   connect(webView, &QWebEngineView::loadStarted, this,
@@ -394,6 +490,8 @@ MainWindow::MainWindow() : QMainWindow() {
           &MainWindow::slotShortcutCloseTab);
 
   installShortcuts();
+  vimToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  installVimKeys();
 
   profile->setHttpUserAgent(
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
