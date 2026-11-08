@@ -18,6 +18,9 @@
 #include <QWebEngineProfile>
 #include <QWebEngineView>
 #include <QWidget>
+#include <memory>
+
+class TermFileChooser;
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
@@ -31,6 +34,10 @@ class MainWindow : public QMainWindow {
   bool adblock = true;
   AdBlockConfig adblockCfg;
   QStringList optExtensionDirs;
+  QString optFileChooser = "builtin"; // "builtin" | "terminal"
+  QString optChooserShell;            // terminal chooser, empty = $SHELL
+  QString optChooserFont; // terminal chooser, empty = system fixed font
+  int optChooserFontSize = 13;
 
 public:
   QTabBar *tabBar;
@@ -42,6 +49,10 @@ public:
   void loadConfig();
   void loadUrl(const QUrl &url);
   QWebEngineView *currentWebView() const;
+  // File picker of a page, answered by a shell in an embedded terminal.
+  // mode is QWebEnginePage::FileSelectionMode as an int (see mainwindow.cc)
+  QStringList chooseFilesInTerminal(int mode, const QStringList &oldFiles,
+                                    const QStringList &accept);
 
   bool setShortcut(const QByteArray &name, const QKeySequence &seq);
   QKeySequence shortcutFor(const QByteArray &name) const;
@@ -52,7 +63,7 @@ public slots:
   void slotShortcutBack();
   void slotShortcutForward();
   void slotShortcutCloseTab(int idx = -1);
-  void slotShortcutCloseCurrentTab(); // no-arg wrapper for table
+  void slotShortcutCloseCurrentTab(); // no arg wrapper for table
   void slotShortcutNewTab();
   void slotShortcutFocusUrl();
   void slotShortcutReload();
@@ -92,6 +103,9 @@ private:
   void fullScreenRequested(QWebEngineFullScreenRequest request);
   void writeSettings();
   QSettings *appSettings;
+  QStackedWidget *rootStack =
+      nullptr; // main content, plus the file chooser terminal
+  std::unique_ptr<TermFileChooser> termChooser; // null = Qts own file dialog
   QWebEngineProfile *profile = nullptr; // Persistent which extensions need
   AdBlockManager *adblockMgr = nullptr;
   bool startupLoaded = false;

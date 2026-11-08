@@ -101,6 +101,18 @@ Ad blocking (keys in config.json):
                                 get network blocking.
   Lists are cached in \${XDG_CACHE_HOME:-~/.cache}/framebuffer-browser/adblock
 
+File chooser (keys in config.json):
+  fileChooser      "builtin"    what a page's file picker (<input type=file>)
+                                opens. "builtin" is Qt's own dialog; "terminal"
+                                swaps the window for a shell in an embedded
+                                terminal. The shell runs as you in your
+                                environment, so there is no login: run
+                                yield <path> to pick, exit (or Ctrl+D) to cancel
+  chooserShell     ""           program for the terminal, must accept -i;
+                                empty = your shell (SHELL)
+  chooserFont      ""           terminal font family; empty = system monospace
+  chooserFontSize  13           terminal font size in points
+
 Environment:
   FBBROWSER_BACKEND          Default for --backend
   FBBROWSER_CONFIG_DIR       Directory holding config.json
@@ -116,6 +128,9 @@ Environment:
   FBBROWSER_HWCURSOR         Set to 1 to use the hardware cursor under eglfs. Off by
                              default: some drivers (e.g. Asahi) reject Qt's cursor
                              ioctls, spamming "Failed to move cursor on screen"
+  FBBROWSER_CHOOSER_DIR      Folder with the file chooser's session and yield
+                             scripts (default: chooser/ next to the browser
+                             binary, where the Nix package installs them)
   FBBROWSER_EXTENSIONS_DIR   Where --install-extension puts extensions and the
                              browser looks for them (default:
                              \${XDG_DATA_HOME:-~/.local/share}/framebuffer-browser/extensions)

@@ -7,6 +7,7 @@
   util-linux,
   curl,
   unzip,
+  lxqt,
   fbbAdblock,
   defaultBackend ? "auto",
   pointerSpeed ? null,
@@ -36,7 +37,10 @@ stdenv.mkDerivation {
       qtwebengine
       qtwayland
     ]
-    ++ [ fbbAdblock ];
+    ++ [
+      fbbAdblock
+      lxqt.qtermwidget
+    ];
 
   postBuild = ''
     $CC -O3 -Wall -o fbbrowser-vt-reset ${./vtreset.c}
@@ -53,6 +57,10 @@ stdenv.mkDerivation {
     install -Dm755 libfbbrowser-scroll.so  $out/lib/fbbrowser/libfbbrowser-scroll.so
 
     install -Dm755 ${./unpack-crx.sh} $out/libexec/fbbrowser/unpack-crx
+
+    install -Dm755 ${./chooser-session.sh} $out/libexec/fbbrowser/chooser/session
+    install -Dm755 ${./yield.sh}           $out/libexec/fbbrowser/chooser/yield
+    ln -s $out/libexec/fbbrowser/chooser/yield $out/bin/yield
 
     install -Dm755 ${./launcher.sh} $out/bin/fbbrowser
     substituteInPlace $out/bin/fbbrowser \

@@ -22,6 +22,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui GuiPrivate Network WebEngineWidget
 add_definitions (-DQT_DISABLE_DEPRECATED_BEFORE=0x060000)
 
 find_library(FBB_ADBLOCK fbb_adblock REQUIRED)
+find_package(qtermwidget6 REQUIRED)
 
 set(PROJECT_SOURCES
 	main.cc
@@ -32,6 +33,8 @@ set(PROJECT_SOURCES
 	adblock.qrc
 	omnibox.cc
 	omnibox.hh
+	filechooser.cc
+	filechooser.hh
 )
 
 add_executable(fbbrowser
@@ -46,6 +49,7 @@ target_link_libraries(fbbrowser PRIVATE
 	Qt6::Network
 	Qt6::Concurrent
 	${FBB_ADBLOCK}
+	qtermwidget6
 	gcc_s
 	util
 	rt

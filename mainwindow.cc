@@ -1,5 +1,6 @@
 #include "mainwindow.hh"
 #include "adblock.hh"
+#include "filechooser.hh"
 #include "omnibox.hh"
 
 #include <QApplication>
@@ -12,6 +13,7 @@
 #include <QJsonObject>
 #include <QKeySequence>
 #include <QNetworkProxy>
+#include <QPointer>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUuid>
@@ -99,15 +101,28 @@ constexpr int kLateReloadWindowMs =
 
 namespace {
 // Receives the commands vimkeys.js sends as console.log(TOKEN + cmd). Messages
-// that don't carry the token are ordinary page console output.
+// that dont carry the token are ordinary page console output
+// Also sends the pages file pickers to the terminal chooser when that is enabled
 class VimPage : public QWebEnginePage {
 public:
+  // (FileSelectionMode as int, old files, accepted MIME types) -> chosen files
+  using ChooseFn =
+      std::function<QStringList(int, const QStringList &, const QStringList &)>;
+
   VimPage(QWebEngineProfile *profile, QString token,
-          std::function<void(const QString &)> onCmd, QObject *parent)
+          std::function<void(const QString &)> onCmd, ChooseFn onChoose,
+          QObject *parent)
       : QWebEnginePage(profile, parent), token_(std::move(token)),
-        onCmd_(std::move(onCmd)) {}
+        onCmd_(std::move(onCmd)), onChoose_(std::move(onChoose)) {}
 
 protected:
+  QStringList chooseFiles(FileSelectionMode mode, const QStringList &oldFiles,
+                          const QStringList &accept) override {
+    if (onChoose_)
+      return onChoose_(static_cast<int>(mode), oldFiles, accept);
+    return QWebEnginePage::chooseFiles(mode, oldFiles, accept); // Qts dialog
+  }
+
   void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level,
                                 const QString &msg, int line,
                                 const QString &src) override {
@@ -121,6 +136,7 @@ protected:
 private:
   QString token_;
   std::function<void(const QString &)> onCmd_;
+  ChooseFn onChoose_;
 };
 } // namespace
 
@@ -353,12 +369,56 @@ void MainWindow::reloadStaleTabs(
   }
 }
 
+QStringList MainWindow::chooseFilesInTerminal(int mode,
+                                              const QStringList &oldFiles,
+                                              const QStringList &accept) {
+  // QWebEnginePage::FileSelectionMode only names Open and OpenMultiple, but Qt
+  // passes Chromiums other two chooser modes through the same argument (its own
+  // chooseFiles() switches on them), numbered after those two
+  constexpr int kOpenMultiple = QWebEnginePage::FileSelectOpenMultiple;
+  constexpr int kUploadFolder = 2;
+  constexpr int kSave = 3;
+
+  if (!termChooser)
+    return {};
+
+  TermFileChooser::Request req;
+  req.multiple = mode == kOpenMultiple;
+  req.directory = mode == kUploadFolder;
+  req.save = mode == kSave;
+  if (req.save && !oldFiles.isEmpty()) // for a save the page proposes a name
+    req.suggested = QFileInfo(oldFiles.first()).fileName();
+  req.accept = accept;
+
+  // The window-wide shortcuts would take keys the shell needs
+	// Same idea as the Escape shortcut in fullScreenRequested
+  QList<std::pair<QPointer<QShortcut>, bool>> saved;
+  for (const ShortcutBinding &b : std::as_const(bindings))
+    if (b.shortcut) {
+      saved.emplaceBack(b.shortcut, b.shortcut->isEnabled());
+      b.shortcut->setEnabled(false);
+    }
+
+  const QStringList files = termChooser->choose(req);
+
+  for (const auto &s : saved)
+    if (s.first)
+      s.first->setEnabled(s.second);
+  return files;
+}
+
 void MainWindow::addNewTab(const QUrl &url) {
   QWebEngineView *webView = new QWebEngineView(stackedWidget);
+  VimPage::ChooseFn choose; // empty, the page opens Qts own file dialog
+  if (termChooser)
+    choose = [this](int mode, const QStringList &oldFiles,
+                    const QStringList &accept) {
+      return chooseFilesInTerminal(mode, oldFiles, accept);
+    };
   webView->setPage(new VimPage(
       profile, vimToken,
       [this, webView](const QString &cmd) { vimCommand(webView, cmd); },
-      webView));
+      std::move(choose), webView));
   configureWebView(webView);
 
   connect(webView, &QWebEngineView::loadStarted, this,
@@ -475,7 +535,30 @@ MainWindow::MainWindow() : QMainWindow() {
   layout->addWidget(tabBar);
   layout->addWidget(urlBar);
   layout->addWidget(stackedWidget);
-  setCentralWidget(mainContainer);
+
+  // The file chooser terminal covers the whole window by becoming the other
+  // page of this stack; the tab logic only ever sees stackedWidget
+  rootStack = new QStackedWidget(this);
+  rootStack->addWidget(mainContainer);
+  setCentralWidget(rootStack);
+
+  if (optFileChooser == QLatin1String("terminal")) {
+    const QString problem = TermFileChooser::helperProblem();
+    if (problem.isEmpty()) {
+      TermFileChooser::Options o;
+      o.shell = optChooserShell;
+      o.fontFamily = optChooserFont;
+      o.fontSize = optChooserFontSize;
+      termChooser = std::make_unique<TermFileChooser>(rootStack, std::move(o));
+    } else {
+      qWarning().noquote()
+          << "fileChooser is \"terminal\" but the chooser scripts are unusable:"
+          << problem << "- using the built-in dialog";
+    }
+  } else if (optFileChooser != QLatin1String("builtin")) {
+    qWarning() << "Unknown fileChooser" << optFileChooser
+               << "(use \"builtin\" or \"terminal\"). Using builtin";
+  }
 
   connect(tabBar, &QTabBar::currentChanged, this, [this](int i) {
     if (i >= 0 && i < stackedWidget->count())
@@ -637,6 +720,10 @@ void MainWindow::loadConfig() {
   readOpt(o, "searchUrl",
           optSearchUrl); // e.g. "https://www.google.com/search?q=%s"
   readOpt(o, "tldUpdate", optTldUpdate);
+  readOpt(o, "fileChooser", optFileChooser);
+  readOpt(o, "chooserShell", optChooserShell);
+  readOpt(o, "chooserFont", optChooserFont);
+  readOpt(o, "chooserFontSize", optChooserFontSize);
 
   if (auto it = o.constFind(QLatin1String("adblockTtlHours"));
       it != o.constEnd()) {
