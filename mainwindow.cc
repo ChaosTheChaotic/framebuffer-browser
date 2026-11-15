@@ -102,7 +102,8 @@ constexpr int kLateReloadWindowMs =
 namespace {
 // Receives the commands vimkeys.js sends as console.log(TOKEN + cmd). Messages
 // that dont carry the token are ordinary page console output
-// Also sends the pages file pickers to the terminal chooser when that is enabled
+// Also sends the pages file pickers to the terminal chooser when that is
+// enabled
 class VimPage : public QWebEnginePage {
 public:
   // (FileSelectionMode as int, old files, accepted MIME types) -> chosen files
@@ -150,7 +151,8 @@ void MainWindow::installVimKeys() {
   src.replace(QStringLiteral("__FBB_TOKEN__"), vimToken);
 
   QWebEngineScript s;
-  s.setName(QStringLiteral("fbb-vimkeys")); // adblock only removes "fbb-adblock:*"
+  s.setName(
+      QStringLiteral("fbb-vimkeys")); // adblock only removes "fbb-adblock:*"
   s.setInjectionPoint(QWebEngineScript::DocumentCreation);
   s.setWorldId(QWebEngineScript::ApplicationWorld); // isolated from the page
   s.setRunsOnSubFrames(false);
@@ -391,7 +393,7 @@ QStringList MainWindow::chooseFilesInTerminal(int mode,
   req.accept = accept;
 
   // The window-wide shortcuts would take keys the shell needs
-	// Same idea as the Escape shortcut in fullScreenRequested
+  // Same idea as the Escape shortcut in fullScreenRequested
   QList<std::pair<QPointer<QShortcut>, bool>> saved;
   for (const ShortcutBinding &b : std::as_const(bindings))
     if (b.shortcut) {
@@ -671,6 +673,7 @@ void MainWindow::slotShortcutNewTab() {
 }
 
 void MainWindow::loadConfig() {
+  optStartupUrl = QStringLiteral("https://duckduckgo.com/"); // Default homepage
   adblockCfg.download = true;
   adblockCfg.lists = AdBlockConfig::defaultLists();
   adblockCfg.cacheDir = AdBlockConfig::defaultCacheDir();
