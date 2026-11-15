@@ -435,12 +435,26 @@ void MainWindow::addNewTab(const QUrl &url) {
   stackedWidget->setCurrentIndex(idx);
 
   connect(webView, &QWebEngineView::titleChanged, this,
-          [this, webView](const QString &title) {
-            int idx = stackedWidget->indexOf(webView);
-            if (idx != -1) {
-              tabBar->setTabText(idx, title.left(20));
-            }
-          });
+          [this, webView](const QString &) { refreshTabText(webView); });
+
+  connect(webView, &QWebEngineView::loadStarted, this, [this, webView] {
+    webView->setProperty("loading", true);
+    webView->setProperty("progress", 0);
+    refreshTabText(webView);
+    if (webView == currentWebView())
+      updateLoadIndicator();
+  });
+  connect(webView, &QWebEngineView::loadProgress, this, [this, webView](int p) {
+    webView->setProperty("progress", p);
+    if (webView == currentWebView())
+      updateLoadIndicator();
+  });
+  connect(webView, &QWebEngineView::loadFinished, this, [this, webView](bool) {
+    webView->setProperty("loading", false);
+    refreshTabText(webView);
+    if (webView == currentWebView())
+      updateLoadIndicator();
+  });
 
   connect(webView, &QWebEngineView::urlChanged, this,
           [this, webView](const QUrl &newUrl) {
@@ -475,6 +489,27 @@ int loadExtensions(const QString &path, QWebEngineExtensionManager *extMgr) {
   return n;
 }
 } // namespace
+
+void MainWindow::updateLoadIndicator() {
+  QWebEngineView *v = currentWebView();
+  const bool loading = v && v->property("loading").toBool();
+  if (loading)
+    loadBar->setValue(
+        qMax(5, v->property("progress").toInt())); // always visible
+  loadBar->setVisible(loading && !urlBar->isHidden());
+}
+
+void MainWindow::refreshTabText(QWebEngineView *view) {
+  const int idx = stackedWidget->indexOf(view);
+  if (idx < 0)
+    return;
+  QString t = view->title().left(20);
+  if (t.isEmpty())
+    t = QStringLiteral("New Tab");
+  if (view->property("loading").toBool())
+    t.prepend(QStringLiteral("… "));
+  tabBar->setTabText(idx, t);
+}
 
 MainWindow::MainWindow() : QMainWindow() {
   loadConfig();
@@ -529,6 +564,12 @@ MainWindow::MainWindow() : QMainWindow() {
       view->setFocus();
   });
 
+  loadBar = new QProgressBar(this);
+  loadBar->setRange(0, 100);
+  loadBar->setTextVisible(false);
+  loadBar->setFixedHeight(3);
+  loadBar->hide();
+
   stackedWidget = new QStackedWidget(this);
 
   tabBar = new QTabBar(this);
@@ -536,6 +577,7 @@ MainWindow::MainWindow() : QMainWindow() {
 
   layout->addWidget(tabBar);
   layout->addWidget(urlBar);
+  layout->addWidget(loadBar);
   layout->addWidget(stackedWidget);
 
   // The file chooser terminal covers the whole window by becoming the other

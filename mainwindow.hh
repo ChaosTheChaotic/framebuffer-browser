@@ -9,6 +9,7 @@
 #include <QHash>
 #include <QLineEdit>
 #include <QMainWindow>
+#include <QProgressBar>
 #include <QSettings>
 #include <QShortcut>
 #include <QStackedWidget>
@@ -43,6 +44,7 @@ public:
   QTabBar *tabBar;
   QStackedWidget *stackedWidget;
   QLineEdit *urlBar;
+  QProgressBar *loadBar = nullptr;
   explicit MainWindow();
   ~MainWindow();
   void configureWebView(QWebEngineView *view);
@@ -110,6 +112,9 @@ private:
   AdBlockManager *adblockMgr = nullptr;
   bool startupLoaded = false;
   Qt::WindowStates prevState = Qt::WindowNoState;
+
+  void updateLoadIndicator();
+  void refreshTabText(QWebEngineView *view);
 
 protected:
   // void closeEvent(QCloseEvent *) override;
