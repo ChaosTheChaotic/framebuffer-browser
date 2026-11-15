@@ -460,6 +460,11 @@ void MainWindow::addNewTab(const QUrl &url) {
           [this, webView](const QUrl &newUrl) {
             if (webView == currentWebView()) {
               urlBar->setText(newUrl.toString());
+              if (webView->property("selectUrlBar").toBool()) {
+                webView->setProperty("selectUrlBar", false);
+                urlBar->setFocus();
+                urlBar->selectAll();
+              }
             }
           });
 
@@ -708,10 +713,14 @@ void MainWindow::loadStartupUrl() {
     return;
   startupLoaded = true;
   loadUrl(url);
+  if (auto *v = currentWebView())
+    v->setProperty("selectUrlBar", true);
 }
 
 void MainWindow::slotShortcutNewTab() {
   addNewTab(omnibox->resolve(optStartupUrl));
+  if (auto *v = currentWebView())
+    v->setProperty("selectUrlBar", true);
 }
 
 void MainWindow::loadConfig() {
